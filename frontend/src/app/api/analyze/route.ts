@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL || "http://localhost:8000";
+const AGENT_URL =
+  process.env.AGENT_INTERNAL_URL ||
+  process.env.NEXT_PUBLIC_AGENT_URL ||
+  "http://localhost:8000";
 
 export async function POST(request: NextRequest) {
   try {

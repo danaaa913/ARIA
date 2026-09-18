@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # ── Rust MCP Server ──────────────────────────────────────
   mcp-server:
@@ -12,10 +10,12 @@ services:
       - HOST=0.0.0.0
       - PORT=8080
       - RUST_LOG=info
-      - GOOGLE_CLOUD_PROJECT=${GCP_PROJECT_ID}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-local-dev}
       - VERTEXAI_LOCATION=${VERTEXAI_LOCATION:-asia-southeast2}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-pro}
       - OPENFDA_API_KEY=${OPENFDA_API_KEY}
+      - LLM_MODE=${LLM_MODE:-ai_studio}
+      - GOOGLE_AI_STUDIO_API_KEY=${GOOGLE_AI_STUDIO_API_KEY}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
@@ -33,7 +33,7 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - MCP_SERVER_URL=http://mcp-server:8080
-      - GOOGLE_CLOUD_PROJECT=${GCP_PROJECT_ID}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-local-dev}
       - VERTEXAI_LOCATION=${VERTEXAI_LOCATION:-asia-southeast2}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-pro}
     depends_on:
@@ -49,5 +49,6 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_AGENT_URL=http://localhost:8000
+      - AGENT_INTERNAL_URL=http://agent:8000
     depends_on:
       - agent
