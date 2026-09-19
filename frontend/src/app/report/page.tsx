@@ -2093,6 +2093,22 @@ export default function ReportPage() {
           onSelectInteraction={selectPriority}
         />
 
+        {data.raw_interactions?.structured_source_status === "unavailable" && (
+          <div
+            className="rounded-xl px-4 py-3 text-sm"
+            style={{
+              color: "#f8d477",
+              background: "rgba(245,158,11,0.08)",
+              border: "1px solid rgba(245,158,11,0.28)",
+            }}
+          >
+            <div className="font-semibold">Structured interaction source unavailable</div>
+            <p className="text-xs mt-1 leading-relaxed" style={{ color: "#c9b98d" }}>
+              No source-supported interaction count or graph is shown. The {data.raw_interactions.review_concern_count ?? data.raw_interactions.interactions.length} item(s) below are AI-identified review concerns and require clinical verification; they are not deterministic database matches.
+            </p>
+          </div>
+        )}
+
         {/* ── Main grid: stack on mobile, side-by-side on desktop ──
             On desktop the left column (3D viz + interpretation panel) is
             much shorter than the right column (overall risk + patient

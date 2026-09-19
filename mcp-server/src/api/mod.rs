@@ -8,4 +8,4 @@ pub use drugbank::DrugBankClient;
 pub use gemini::GeminiClient;
 pub use openfda::OpenFdaClient;
 pub use pubmed::PubMedClient;
-pub use rxnorm::RxNormClient;
+pub use rxnorm::{InteractionSourceStatus, RxNormClient};

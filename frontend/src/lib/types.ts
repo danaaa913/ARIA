@@ -55,6 +55,10 @@ export interface InteractionReport {
   critical_count: number;
   high_count: number;
   summary: string;
+  structured_interaction_count?: number;
+  review_concern_count?: number;
+  structured_source_status?: "available" | "unavailable" | "unknown";
+  structured_source_message?: string;
 }
 
 export interface MechanismPathway {
@@ -105,6 +109,8 @@ export interface InteractionGraph {
   emergent_interactions: EmergentInteraction[];
   total_edges: number;
   graph_density: number;
+  structured_source_status?: "available" | "unavailable" | "unknown";
+  structured_source_message?: string;
 }
 
 // ── Risk ────────────────────────────────────────────────────

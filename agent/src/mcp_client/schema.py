@@ -98,6 +98,10 @@ class InteractionReport(BaseModel):
     critical_count: int
     high_count: int
     summary: str
+    structured_interaction_count: int = 0
+    review_concern_count: int = 0
+    structured_source_status: str = "unknown"
+    structured_source_message: str = ""
 
 
 class MechanismPathway(BaseModel):
@@ -149,6 +153,8 @@ class InteractionGraph(BaseModel):
     emergent_interactions: list[EmergentInteraction] = Field(default_factory=list)
     total_edges: int = 0
     graph_density: float = 0.0
+    structured_source_status: str = "unknown"
+    structured_source_message: str = ""
 
 
 # ── Risk Models ─────────────────────────────────────────────

@@ -47,6 +47,14 @@ pub struct InteractionReport {
     pub critical_count: usize,
     pub high_count: usize,
     pub summary: String,
+    /// Interactions returned by an external deterministic interaction source.
+    /// `interactions` remains the LLM review output for backwards compatibility.
+    #[serde(default)]
+    pub structured_interaction_count: usize,
+    #[serde(default)]
+    pub review_concern_count: usize,
+    pub structured_source_status: String,
+    pub structured_source_message: String,
 }
 
 /// Mechanistic explanation for a drug pair.
@@ -106,6 +114,8 @@ pub struct InteractionGraph {
     pub emergent_interactions: Vec<EmergentInteraction>,
     pub total_edges: usize,
     pub graph_density: f64,
+    pub structured_source_status: String,
+    pub structured_source_message: String,
 }
 
 /// Drug substitution alternative.

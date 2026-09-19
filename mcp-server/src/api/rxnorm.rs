@@ -74,6 +74,32 @@ pub struct RxNormInteraction {
     pub description: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InteractionSourceStatus {
+    Available,
+    Unavailable,
+}
+
+#[derive(Debug, Clone)]
+pub struct InteractionLookup {
+    pub interactions: Vec<RxNormInteraction>,
+    pub status: InteractionSourceStatus,
+    pub message: String,
+}
+
+fn parse_interactions(data: InteractionResponse) -> Vec<RxNormInteraction> {
+    data.full_interaction_type_group
+        .unwrap_or_default()
+        .into_iter()
+        .flat_map(|g| g.full_interaction_type.unwrap_or_default())
+        .flat_map(|t| t.interaction_pair.unwrap_or_default())
+        .map(|pair| RxNormInteraction {
+            severity: pair.severity.unwrap_or_else(|| "unknown".to_string()),
+            description: pair.description.unwrap_or_default(),
+        })
+        .collect()
+}
+
 impl RxNormClient {
     pub fn new() -> Self {
         Self {
@@ -83,10 +109,10 @@ impl RxNormClient {
 
     /// Resolve a drug name to its RxNorm CUI.
     pub async fn resolve_rxcui(&self, drug_name: &str) -> Result<Option<RxNormResult>> {
-        let url = format!("{}/rxcui.json?name={}&search=1", RXNORM_BASE, drug_name);
         let resp = self
             .http
-            .get(&url)
+            .get(format!("{}/rxcui.json", RXNORM_BASE))
+            .query(&[("name", drug_name), ("search", "1")])
             .send()
             .await
             .context("RxNorm lookup failed")?;
@@ -113,7 +139,7 @@ impl RxNormClient {
     }
 
     /// Get pairwise interactions between two drugs by RxCUI.
-    pub async fn get_interactions(&self, rxcui_a: &str, rxcui_b: &str) -> Result<Vec<RxNormInteraction>> {
+    pub async fn get_interactions(&self, rxcui_a: &str, rxcui_b: &str) -> Result<InteractionLookup> {
         let url = format!(
             "{}/interaction/list.json?rxcuis={}+{}",
             RXNORM_BASE, rxcui_a, rxcui_b
@@ -122,24 +148,23 @@ impl RxNormClient {
         let resp = self.http.get(&url).send().await?;
 
         if !resp.status().is_success() {
-            return Ok(vec![]);
+            return Ok(InteractionLookup {
+                interactions: vec![],
+                status: InteractionSourceStatus::Unavailable,
+                message: format!(
+                    "RxNav drug-drug interaction service unavailable (HTTP {}). The service was retired by NLM on 2024-01-02.",
+                    resp.status().as_u16()
+                ),
+            });
         }
 
         let data: InteractionResponse = resp.json().await?;
 
-        let interactions = data
-            .full_interaction_type_group
-            .unwrap_or_default()
-            .into_iter()
-            .flat_map(|g| g.full_interaction_type.unwrap_or_default())
-            .flat_map(|t| t.interaction_pair.unwrap_or_default())
-            .map(|pair| RxNormInteraction {
-                severity: pair.severity.unwrap_or_else(|| "unknown".to_string()),
-                description: pair.description.unwrap_or_default(),
-            })
-            .collect();
-
-        Ok(interactions)
+        Ok(InteractionLookup {
+            interactions: parse_interactions(data),
+            status: InteractionSourceStatus::Available,
+            message: "RxNav interaction response received.".to_string(),
+        })
     }
 
     /// Get all known interactions for a single drug.
@@ -154,18 +179,35 @@ impl RxNormClient {
 
         let data: InteractionResponse = resp.json().await?;
 
-        let interactions = data
-            .full_interaction_type_group
-            .unwrap_or_default()
-            .into_iter()
-            .flat_map(|g| g.full_interaction_type.unwrap_or_default())
-            .flat_map(|t| t.interaction_pair.unwrap_or_default())
-            .map(|pair| RxNormInteraction {
-                severity: pair.severity.unwrap_or_else(|| "unknown".to_string()),
-                description: pair.description.unwrap_or_default(),
-            })
-            .collect();
+        Ok(parse_interactions(data))
+    }
+}
 
-        Ok(interactions)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_supported_positive_interaction_fixture() {
+        let fixture = r#"{
+          "fullInteractionTypeGroup": [{
+            "fullInteractionType": [{
+              "interactionPair": [{
+                "severity": "high",
+                "description": "Known interaction from deterministic fixture"
+              }]
+            }]
+          }]
+        }"#;
+        let parsed: InteractionResponse = serde_json::from_str(fixture).unwrap();
+        let interactions = parse_interactions(parsed);
+        assert_eq!(interactions.len(), 1);
+        assert_eq!(interactions[0].severity, "high");
+    }
+
+    #[test]
+    fn parses_negative_no_data_fixture() {
+        let parsed: InteractionResponse = serde_json::from_str("{}").unwrap();
+        assert!(parse_interactions(parsed).is_empty());
     }
 }

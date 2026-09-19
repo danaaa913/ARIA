@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::api::{OpenFdaClient, RxNormClient};
+use crate::api::{InteractionSourceStatus, OpenFdaClient, RxNormClient};
 use crate::llm::{LlmClient, INTERACTION_SYSTEM_PROMPT};
 use crate::models::{Drug, InteractionReport, PatientContext};
 
@@ -16,6 +16,8 @@ pub async fn check_interactions(
     // Step 1: Gather interaction data from RxNorm for each drug pair
     let mut rxnorm_data = Vec::new();
     let mut resolved_cuis: Vec<(String, String)> = Vec::new();
+    let mut source_available = true;
+    let mut source_message = "RxNav interaction response received.".to_string();
 
     for drug in drugs {
         if let Some(result) = rxnorm.resolve_rxcui(&drug.name).await? {
@@ -26,10 +28,14 @@ pub async fn check_interactions(
     // Check pairwise interactions via RxNorm
     for i in 0..resolved_cuis.len() {
         for j in (i + 1)..resolved_cuis.len() {
-            let interactions = rxnorm
+            let lookup = rxnorm
                 .get_interactions(&resolved_cuis[i].1, &resolved_cuis[j].1)
                 .await?;
-            for interaction in interactions {
+            if lookup.status == InteractionSourceStatus::Unavailable {
+                source_available = false;
+                source_message = lookup.message;
+            }
+            for interaction in lookup.interactions {
                 rxnorm_data.push(serde_json::json!({
                     "drug_a": resolved_cuis[i].0,
                     "drug_b": resolved_cuis[j].0,
@@ -54,6 +60,7 @@ pub async fn check_interactions(
     }
 
     // Step 3: Use Gemini to reason over all collected data
+    let structured_interaction_count = rxnorm_data.len();
     let drug_names: Vec<&str> = drugs.iter().map(|d| d.name.as_str()).collect();
     let user_prompt = serde_json::json!({
         "medications": drug_names,
@@ -83,6 +90,7 @@ pub async fn check_interactions(
         .filter(|i| i.severity == crate::models::Severity::High)
         .count();
 
+    let review_concern_count = interactions.len();
     Ok(InteractionReport {
         total_interactions: interactions.len(),
         critical_count,
@@ -93,5 +101,9 @@ pub async fn check_interactions(
             .unwrap_or("Analysis complete.")
             .to_string(),
         interactions,
+        structured_interaction_count,
+        review_concern_count,
+        structured_source_status: if source_available { "available" } else { "unavailable" }.to_string(),
+        structured_source_message: source_message,
     })
 }
