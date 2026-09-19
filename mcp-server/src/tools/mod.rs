@@ -16,7 +16,8 @@ use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::api::{DrugBankClient, GeminiClient, OpenFdaClient, PubMedClient, RxNormClient};
+use crate::api::{DrugBankClient, OpenFdaClient, PubMedClient, RxNormClient};
+use crate::llm::LlmClient;
 use crate::models::{Drug, FullAnalysis, PatientContext};
 // AppropriatenessAssessment is returned by the appropriateness tool; the
 // concrete type is constructed inside tools/appropriateness.rs.
@@ -260,7 +261,7 @@ pub async fn dispatch_tool(
     openfda: &OpenFdaClient,
     _pubmed: &PubMedClient,
     drugbank: &DrugBankClient,
-    gemini: &GeminiClient,
+    llm: &LlmClient,
 ) -> Result<Value> {
     match tool_name {
         "check_interactions" => {
@@ -288,7 +289,7 @@ pub async fn dispatch_tool(
                 &patient_context,
                 rxnorm,
                 openfda,
-                gemini,
+                llm,
             )
             .await?;
 
@@ -304,7 +305,7 @@ pub async fn dispatch_tool(
             )?;
 
             let result =
-                explain_mechanism::explain_mechanism(&drug_a, &drug_b, drugbank, gemini).await?;
+                explain_mechanism::explain_mechanism(&drug_a, &drug_b, drugbank, llm).await?;
 
             Ok(serde_json::to_value(result)?)
         }
@@ -317,7 +318,7 @@ pub async fn dispatch_tool(
                 params.get("phenotype").cloned().unwrap_or(Value::Null),
             )?;
 
-            let result = score_risk::score_risk(&interaction, &phenotype, gemini).await?;
+            let result = score_risk::score_risk(&interaction, &phenotype, llm).await?;
 
             Ok(serde_json::to_value(result)?)
         }
@@ -350,7 +351,7 @@ pub async fn dispatch_tool(
                 &drug,
                 reason,
                 &patient_context,
-                gemini,
+                llm,
             )
             .await?;
 
@@ -363,7 +364,7 @@ pub async fn dispatch_tool(
             )?;
 
             let result =
-                interaction_graph::build_interaction_graph(&drugs, rxnorm, drugbank, gemini)
+                interaction_graph::build_interaction_graph(&drugs, rxnorm, drugbank, llm)
                     .await?;
 
             Ok(serde_json::to_value(result)?)
@@ -375,7 +376,7 @@ pub async fn dispatch_tool(
             )?;
 
             let result =
-                burden_scores::compute_burden_scores(&drugs, drugbank, gemini).await?;
+                burden_scores::compute_burden_scores(&drugs, drugbank, llm).await?;
 
             Ok(serde_json::to_value(result)?)
         }
@@ -394,7 +395,7 @@ pub async fn dispatch_tool(
                 &drugs,
                 timeline_days,
                 drugbank,
-                gemini,
+                llm,
             )
             .await?;
 
@@ -407,7 +408,7 @@ pub async fn dispatch_tool(
             )?;
 
             let result =
-                deprescribing_plan::generate_deprescribing_plan(&analysis, gemini).await?;
+                deprescribing_plan::generate_deprescribing_plan(&analysis, llm).await?;
 
             Ok(serde_json::to_value(result)?)
         }
@@ -417,7 +418,7 @@ pub async fn dispatch_tool(
                 params.get("analysis").cloned().unwrap_or(Value::Null),
             )?;
 
-            let result = generate_report::generate_report(&analysis, gemini).await?;
+            let result = generate_report::generate_report(&analysis, llm).await?;
 
             Ok(serde_json::to_value(result)?)
         }
@@ -443,7 +444,7 @@ pub async fn dispatch_tool(
                 });
 
             let result =
-                renal_dosing::assess_renal_dosing(&drugs, &patient_context, gemini).await?;
+                renal_dosing::assess_renal_dosing(&drugs, &patient_context, llm).await?;
 
             Ok(serde_json::to_value(result)?)
         }
@@ -469,7 +470,7 @@ pub async fn dispatch_tool(
                 });
 
             let result =
-                appropriateness::screen_appropriateness(&drugs, &patient_context, gemini).await?;
+                appropriateness::screen_appropriateness(&drugs, &patient_context, llm).await?;
 
             Ok(serde_json::to_value(result)?)
         }

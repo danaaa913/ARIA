@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::api::{DrugBankClient, GeminiClient};
-use crate::llm::TEMPORAL_SYSTEM_PROMPT;
+use crate::api::DrugBankClient;
+use crate::llm::{LlmClient, TEMPORAL_SYSTEM_PROMPT};
 use crate::models::{CascadeModel, Drug};
 
 /// Model the temporal evolution of drug interaction risk over a timeline.
@@ -9,7 +9,7 @@ pub async fn model_temporal_cascade(
     drugs: &[Drug],
     timeline_days: u32,
     drugbank: &DrugBankClient,
-    gemini: &GeminiClient,
+    llm: &LlmClient,
 ) -> Result<CascadeModel> {
     // Gather half-life and pharmacokinetic data for temporal modeling
     let mut pk_data = Vec::new();
@@ -37,7 +37,7 @@ pub async fn model_temporal_cascade(
     })
     .to_string();
 
-    let response = gemini.generate(TEMPORAL_SYSTEM_PROMPT, &user_prompt).await?;
+    let response = llm.generate(TEMPORAL_SYSTEM_PROMPT, &user_prompt).await?;
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap_or_else(|_| {
         serde_json::json!({

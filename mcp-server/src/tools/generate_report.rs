@@ -1,8 +1,7 @@
 use anyhow::Result;
 use std::fmt::Write;
 
-use crate::api::GeminiClient;
-use crate::llm::REPORT_SYSTEM_PROMPT;
+use crate::llm::{LlmClient, REPORT_SYSTEM_PROMPT};
 use crate::models::{ClinicalReport, FullAnalysis};
 
 // Import the canonical severity-label mapping. This lives next door in
@@ -182,7 +181,7 @@ fn build_report_markdown(
 /// Assemble all analysis results into a structured clinical report.
 pub async fn generate_report(
     analysis: &FullAnalysis,
-    gemini: &GeminiClient,
+    llm: &LlmClient,
 ) -> Result<ClinicalReport> {
     let user_prompt = serde_json::json!({
         "medications": analysis.medications,
@@ -196,7 +195,7 @@ pub async fn generate_report(
     })
     .to_string();
 
-    let response = gemini
+    let response = llm
         .generate_text(REPORT_SYSTEM_PROMPT, &user_prompt)
         .await?;
 

@@ -16,6 +16,9 @@ services:
       - OPENFDA_API_KEY=${OPENFDA_API_KEY}
       - LLM_MODE=${LLM_MODE:-ai_studio}
       - GOOGLE_AI_STUDIO_API_KEY=${GOOGLE_AI_STUDIO_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODELS=${OPENROUTER_MODELS}
+      - OPENROUTER_PRIVACY_MODE=${OPENROUTER_PRIVACY_MODE:-strict}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s

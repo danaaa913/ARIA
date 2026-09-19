@@ -17,7 +17,7 @@
 use anyhow::Result;
 use serde::Deserialize;
 
-use crate::api::GeminiClient;
+use crate::llm::LlmClient;
 use crate::models::{
     AppropriatenessAssessment, AppropriatenessFlag, Drug, PatientContext, PrescribingOmission,
 };
@@ -204,12 +204,12 @@ fn build_summary(
     format!("Geriatric screen (age {}): {}.", age, parts.join("; "))
 }
 
-/// Tool entrypoint. `_gemini` is accepted to match the dispatcher signature
+/// Tool entrypoint. `_llm` is accepted to match the dispatcher signature
 /// but is intentionally unused — this assessment is deterministic.
 pub async fn screen_appropriateness(
     drugs: &[Drug],
     patient: &PatientContext,
-    _gemini: &GeminiClient,
+    _llm: &LlmClient,
 ) -> Result<AppropriatenessAssessment> {
     assess(drugs, patient.age as u32, &patient.comorbidities)
 }

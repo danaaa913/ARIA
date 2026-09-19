@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::api::{DrugBankClient, GeminiClient};
-use crate::llm::MECHANISM_SYSTEM_PROMPT;
+use crate::api::DrugBankClient;
+use crate::llm::{LlmClient, MECHANISM_SYSTEM_PROMPT};
 use crate::models::{Drug, MechanisticExplanation};
 
 /// Provide mechanistic reasoning for a specific drug interaction.
@@ -9,7 +9,7 @@ pub async fn explain_mechanism(
     drug_a: &Drug,
     drug_b: &Drug,
     drugbank: &DrugBankClient,
-    gemini: &GeminiClient,
+    llm: &LlmClient,
 ) -> Result<MechanisticExplanation> {
     // Gather CYP pathway data from DrugBank
     let pharm_a = drugbank.get_pharmacology(&drug_a.name).await?;
@@ -29,7 +29,7 @@ pub async fn explain_mechanism(
     })
     .to_string();
 
-    let response = gemini.generate(MECHANISM_SYSTEM_PROMPT, &user_prompt).await?;
+    let response = llm.generate(MECHANISM_SYSTEM_PROMPT, &user_prompt).await?;
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap_or_else(|_| {
         serde_json::json!({

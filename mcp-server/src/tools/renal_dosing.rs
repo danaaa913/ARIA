@@ -16,7 +16,7 @@ use anyhow::Result;
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::api::GeminiClient;
+use crate::llm::LlmClient;
 use crate::models::{Drug, PatientContext, RenalAssessment, RenalDrugAdjustment};
 
 const RENAL_DATA: &str = include_str!("../data/renal_dosing.json");
@@ -123,12 +123,12 @@ fn assess(drugs: &[Drug], ckd_stage: u8) -> Result<RenalAssessment> {
     })
 }
 
-/// Tool entrypoint. `_gemini` is accepted to match the dispatcher signature
+/// Tool entrypoint. `_llm` is accepted to match the dispatcher signature
 /// but is intentionally unused — this assessment is deterministic.
 pub async fn assess_renal_dosing(
     drugs: &[Drug],
     patient: &PatientContext,
-    _gemini: &GeminiClient,
+    _llm: &LlmClient,
 ) -> Result<RenalAssessment> {
     assess(drugs, patient.ckd_stage)
 }

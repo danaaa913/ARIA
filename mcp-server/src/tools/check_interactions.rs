@@ -1,8 +1,8 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::api::{GeminiClient, OpenFdaClient, RxNormClient};
-use crate::llm::INTERACTION_SYSTEM_PROMPT;
+use crate::api::{OpenFdaClient, RxNormClient};
+use crate::llm::{LlmClient, INTERACTION_SYSTEM_PROMPT};
 use crate::models::{Drug, InteractionReport, PatientContext};
 
 /// Detect pairwise and N-drug interactions from a medication list.
@@ -11,7 +11,7 @@ pub async fn check_interactions(
     patient_context: &PatientContext,
     rxnorm: &RxNormClient,
     openfda: &OpenFdaClient,
-    gemini: &GeminiClient,
+    llm: &LlmClient,
 ) -> Result<InteractionReport> {
     // Step 1: Gather interaction data from RxNorm for each drug pair
     let mut rxnorm_data = Vec::new();
@@ -63,7 +63,7 @@ pub async fn check_interactions(
     })
     .to_string();
 
-    let response = gemini.generate(INTERACTION_SYSTEM_PROMPT, &user_prompt).await?;
+    let response = llm.generate(INTERACTION_SYSTEM_PROMPT, &user_prompt).await?;
 
     // Parse the Gemini response
     let parsed: Value = serde_json::from_str(&response)

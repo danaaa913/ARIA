@@ -1,15 +1,15 @@
 use anyhow::Result;
 use tracing::warn;
 
-use crate::api::{DrugBankClient, GeminiClient};
-use crate::llm::BURDEN_SYSTEM_PROMPT;
+use crate::api::DrugBankClient;
+use crate::llm::{LlmClient, BURDEN_SYSTEM_PROMPT};
 use crate::models::{BurdenScores, Drug};
 
 /// Calculate anticholinergic burden, sedation load, and QT prolongation risk.
 pub async fn compute_burden_scores(
     drugs: &[Drug],
     drugbank: &DrugBankClient,
-    gemini: &GeminiClient,
+    llm: &LlmClient,
 ) -> Result<BurdenScores> {
     // Gather pharmacology data for burden assessment
     let mut pharmacology = Vec::new();
@@ -31,7 +31,7 @@ pub async fn compute_burden_scores(
     })
     .to_string();
 
-    let response = gemini.generate(BURDEN_SYSTEM_PROMPT, &user_prompt).await?;
+    let response = llm.generate(BURDEN_SYSTEM_PROMPT, &user_prompt).await?;
 
     // Robustly extract JSON from the LLM response. Gemini frequently wraps
     // its JSON output in a markdown code fence (```json ... ```) or prefixes

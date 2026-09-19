@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::api::{DrugBankClient, GeminiClient, RxNormClient};
-use crate::llm::GRAPH_SYSTEM_PROMPT;
+use crate::api::{DrugBankClient, RxNormClient};
+use crate::llm::{LlmClient, GRAPH_SYSTEM_PROMPT};
 use crate::models::{Drug, InteractionGraph};
 
 /// Build an N-drug interaction graph with hub identification and emergent interaction detection.
@@ -9,7 +9,7 @@ pub async fn build_interaction_graph(
     drugs: &[Drug],
     rxnorm: &RxNormClient,
     drugbank: &DrugBankClient,
-    gemini: &GeminiClient,
+    llm: &LlmClient,
 ) -> Result<InteractionGraph> {
     // Step 1: Resolve all RxCUIs
     let mut resolved: Vec<(String, Option<String>)> = Vec::new();
@@ -79,7 +79,7 @@ pub async fn build_interaction_graph(
     })
     .to_string();
 
-    let response = gemini.generate(GRAPH_SYSTEM_PROMPT, &user_prompt).await?;
+    let response = llm.generate(GRAPH_SYSTEM_PROMPT, &user_prompt).await?;
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap_or_else(|_| {
         serde_json::json!({

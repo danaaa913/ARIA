@@ -1,7 +1,6 @@
 use anyhow::Result;
 
-use crate::api::GeminiClient;
-use crate::llm::RISK_SCORE_SYSTEM_PROMPT;
+use crate::llm::{LlmClient, RISK_SCORE_SYSTEM_PROMPT};
 use crate::models::{Interaction, PatientPhenotype, RiskScore};
 
 /// Map a numeric risk score (0.0-10.0) to a human-readable severity label.
@@ -55,7 +54,7 @@ fn clamp_score(value: f64) -> f64 {
 pub async fn score_risk(
     interaction: &Interaction,
     phenotype: &PatientPhenotype,
-    gemini: &GeminiClient,
+    llm: &LlmClient,
 ) -> Result<RiskScore> {
     let user_prompt = serde_json::json!({
         "interaction": {
@@ -77,7 +76,7 @@ pub async fn score_risk(
     })
     .to_string();
 
-    let response = gemini.generate(RISK_SCORE_SYSTEM_PROMPT, &user_prompt).await?;
+    let response = llm.generate(RISK_SCORE_SYSTEM_PROMPT, &user_prompt).await?;
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap_or_else(|_| {
         serde_json::json!({

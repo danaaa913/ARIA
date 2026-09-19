@@ -1,13 +1,12 @@
 use anyhow::Result;
 
-use crate::api::GeminiClient;
-use crate::llm::DEPRESCRIBING_SYSTEM_PROMPT;
+use crate::llm::{LlmClient, DEPRESCRIBING_SYSTEM_PROMPT};
 use crate::models::{DeprescribingPlan, FullAnalysis};
 
 /// Generate a prioritized, actionable deprescribing plan from the full analysis.
 pub async fn generate_deprescribing_plan(
     analysis: &FullAnalysis,
-    gemini: &GeminiClient,
+    llm: &LlmClient,
 ) -> Result<DeprescribingPlan> {
     let user_prompt = serde_json::json!({
         "medications": analysis.medications,
@@ -21,7 +20,7 @@ pub async fn generate_deprescribing_plan(
     })
     .to_string();
 
-    let response = gemini
+    let response = llm
         .generate(DEPRESCRIBING_SYSTEM_PROMPT, &user_prompt)
         .await?;
 

@@ -1,7 +1,6 @@
 use anyhow::Result;
 
-use crate::api::GeminiClient;
-use crate::llm::ALTERNATIVES_SYSTEM_PROMPT;
+use crate::llm::{LlmClient, ALTERNATIVES_SYSTEM_PROMPT};
 use crate::models::{Alternatives, Drug, PatientContext};
 
 /// Suggest evidence-based drug substitutions to reduce interaction risk.
@@ -9,7 +8,7 @@ pub async fn suggest_alternatives(
     drug: &Drug,
     reason: &str,
     patient_context: &PatientContext,
-    gemini: &GeminiClient,
+    llm: &LlmClient,
 ) -> Result<Alternatives> {
     let user_prompt = serde_json::json!({
         "drug": {
@@ -29,7 +28,7 @@ pub async fn suggest_alternatives(
     })
     .to_string();
 
-    let response = gemini.generate(ALTERNATIVES_SYSTEM_PROMPT, &user_prompt).await?;
+    let response = llm.generate(ALTERNATIVES_SYSTEM_PROMPT, &user_prompt).await?;
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap_or_else(|_| {
         serde_json::json!({

@@ -16,7 +16,8 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
-use api::{DrugBankClient, GeminiClient, OpenFdaClient, PubMedClient, RxNormClient};
+use api::{DrugBankClient, OpenFdaClient, PubMedClient, RxNormClient};
+use llm::LlmClient;
 use tools::{dispatch_tool, list_tools};
 
 // ── Shared Application State ───────────────────────────────
@@ -27,7 +28,7 @@ struct AppState {
     openfda: OpenFdaClient,
     pubmed: PubMedClient,
     drugbank: DrugBankClient,
-    gemini: GeminiClient,
+    llm: LlmClient,
 }
 
 // ── MCP Protocol Types ─────────────────────────────────────
@@ -165,7 +166,7 @@ async fn handle_mcp(
                 &state.openfda,
                 &state.pubmed,
                 &state.drugbank,
-                &state.gemini,
+                &state.llm,
             )
             .await
             {
@@ -256,7 +257,7 @@ async fn main() -> anyhow::Result<()> {
         openfda: OpenFdaClient::new(openfda_key),
         pubmed: PubMedClient::new(),
         drugbank: DrugBankClient::new(),
-        gemini: GeminiClient::from_env()?,
+        llm: LlmClient::from_env()?,
     });
 
     // CORS configuration — allow all origins for development and Prompt Opinion
