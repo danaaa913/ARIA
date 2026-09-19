@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { InteractionCard } from "./InteractionCard";
 import { DeprescribingStep } from "./DeprescribingStep";
+import { isUpstreamModelError } from "@/lib/narrative";
 import type { AnalyzeResponse } from "@/lib/types";
 
 interface RiskReportProps {
@@ -203,8 +204,32 @@ export function RiskReport({ data }: RiskReportProps) {
     return buildFallbackSummary(interactions, criticalFindings);
   }, [rawSummary, interactions, criticalFindings]);
 
+  // Upstream model/API failures (e.g. Gemini 429) must never be presented
+  // as clinical narrative. Detect them in whichever raw text field exists
+  // and surface a neutral placeholder; technical detail stays in the raw
+  // export/logs only.
+  const rawTextCandidate = (report as any).raw_text ?? report.report_text;
+  const narrativeError = isUpstreamModelError(rawTextCandidate);
+
   return (
     <div className="space-y-5">
+      {/* Upstream narrative unavailable — structured findings still complete */}
+      {narrativeError && (
+        <SectionCard accentColor={SECTION_ACCENT.raw} delay={0}>
+          <p
+            className="text-xs leading-relaxed"
+            style={{ color: "#a3b8d0" }}
+          >
+            <span className="font-semibold" style={{ color: "#fbbf24" }}>
+              Narrative summary temporarily unavailable.
+            </span>{" "}
+            The structured clinical analysis below (critical findings,
+            interactions, renal assessment, appropriateness, deprescribing)
+            remains complete and accurate. Please retry later.
+          </p>
+        </SectionCard>
+      )}
+
       {/* Critical Findings */}
       {criticalFindings.length > 0 && (
         <SectionCard accentColor={SECTION_ACCENT.critical} delay={0.1}>
@@ -965,7 +990,7 @@ export function RiskReport({ data }: RiskReportProps) {
           dump here, which is useful for debugging but useless to clinical
           users. Default-hidden, slate accent (de-emphasised vs the
           clinical sections above). */}
-      {report.report_text && (
+      {report.report_text && !narrativeError && (
         <SectionCard accentColor={SECTION_ACCENT.raw} delay={0.4}>
           <div className="flex items-center justify-between mb-3">
             <h3

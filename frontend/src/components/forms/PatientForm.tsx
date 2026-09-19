@@ -57,17 +57,18 @@ export function PatientForm({ onSubmit, isLoading = false, initialValue }: Patie
 
   return (
     <div className="space-y-8">
-      {/* ── Medications Section ── */}
+      {/* ── Patient Context Section (clinical context drives the risk
+          model, so it leads the input flow) ── */}
       <section>
         <div className="flex items-center justify-between mb-4">
           <h2
             className="font-display font-semibold text-xl"
             style={{ color: "var(--text)" }}
           >
-            Medications
+            Patient Context
           </h2>
           <span
-            className="text-sm px-3 py-1 rounded-full"
+            className="text-xs px-2.5 py-1 rounded-full"
             style={{
               fontFamily: "var(--font-mono)",
               background: "var(--primary-dim)",
@@ -75,8 +76,45 @@ export function PatientForm({ onSubmit, isLoading = false, initialValue }: Patie
               border: "1px solid rgba(0, 229, 255, 0.15)",
             }}
           >
-            {validDrugCount} drug{validDrugCount !== 1 ? "s" : ""}
+            01
           </span>
+        </div>
+        <PatientContextForm value={patient} onChange={setPatient} />
+      </section>
+
+      {/* ── Medication Regimen Section ── */}
+      <section>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <h2
+            className="font-display font-semibold text-xl"
+            style={{ color: "var(--text)" }}
+          >
+            Medication Regimen
+          </h2>
+          <div className="flex items-center gap-2">
+            <span
+              className="text-sm px-3 py-1 rounded-full"
+              style={{
+                fontFamily: "var(--font-mono)",
+                background: "var(--primary-dim)",
+                color: "var(--primary)",
+                border: "1px solid rgba(0, 229, 255, 0.15)",
+              }}
+            >
+              {validDrugCount} drug{validDrugCount !== 1 ? "s" : ""}
+            </span>
+            <span
+              className="text-xs px-2.5 py-1 rounded-full"
+              style={{
+                fontFamily: "var(--font-mono)",
+                background: "rgba(8, 20, 37, 0.6)",
+                color: "var(--text-muted)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              02
+            </span>
+          </div>
         </div>
 
         <div className="space-y-2">
@@ -112,17 +150,12 @@ export function PatientForm({ onSubmit, isLoading = false, initialValue }: Patie
         >
           + Add Medication
         </button>
-      </section>
 
-      {/* ── Patient Context Section ── */}
-      <section>
-        <h2
-          className="font-display font-semibold text-xl mb-4"
-          style={{ color: "var(--text)" }}
-        >
-          Patient Context
-        </h2>
-        <PatientContextForm value={patient} onChange={setPatient} />
+        {validDrugCount < 2 && (
+          <p className="text-xs mt-3" style={{ color: "var(--text-muted)" }}>
+            Enter at least 2 medications to start analysis
+          </p>
+        )}
       </section>
 
       {/* ── Submit ── */}
@@ -152,18 +185,9 @@ export function PatientForm({ onSubmit, isLoading = false, initialValue }: Patie
             Analyzing Interactions...
           </span>
         ) : (
-          `Analyze ${validDrugCount} Medication${validDrugCount !== 1 ? "s" : ""}`
+          "Analyze Medication Regimen"
         )}
       </motion.button>
-
-      {validDrugCount < 2 && (
-        <p
-          className="text-xs text-center"
-          style={{ color: "var(--text-muted)" }}
-        >
-          Enter at least 2 medications to start analysis
-        </p>
-      )}
     </div>
   );
 }

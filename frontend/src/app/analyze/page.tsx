@@ -141,6 +141,12 @@ export default function AnalyzePage() {
               cascades, flag renal dose adjustments, screen for geriatric
               appropriateness, and generate a deprescribing plan.
             </p>
+            <p
+              className="text-xs mt-3 max-w-md mx-auto"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Demonstration prototype — do not enter real patient data.
+            </p>
           </motion.div>
 
           {/* Error */}

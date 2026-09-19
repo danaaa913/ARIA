@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import dynamic from "next/dynamic";
 import { RiskReport } from "@/components/report/RiskReport";
+import { ClinicalOverview } from "@/components/report/ClinicalOverview";
+import { ClinicalReviewPriorities } from "@/components/report/ClinicalReviewPriorities";
+import type { ReviewPriorityItem } from "@/components/report/ClinicalReviewPriorities";
 import { DataStream } from "@/components/effects/DataStream";
 import { GridBackground } from "@/components/effects/GridBackground";
 import type {
@@ -13,12 +16,12 @@ import type {
   InteractionGraph,
   CascadeModel,
   DeprescribingPlan,
-  DeprescribingStep,
-  DeprescribingAction,
   InterventionWindow,
   Severity,
 } from "@/lib/types";
 import { getActionLabel } from "@/lib/severity";
+import { resolveMedicationCount } from "@/lib/medicationCount";
+import { isUpstreamModelError } from "@/lib/narrative";
 
 const Scene = dynamic(
   () => import("@/components/3d/Scene").then((m) => ({ default: m.Scene })),
@@ -462,125 +465,6 @@ function getDemoTemporalModel(request: AnalyzeRequest | null, graph?: Interactio
   };
 }
 
-// ── Deprescribing builder ─────────────────────────────────
-
-function getDemoDeprescribingPlan(request: AnalyzeRequest | null, graph?: InteractionGraph | null): DeprescribingPlan {
-  const drugNames = extractDrugNames(request).map(titleCase);
-  if (drugNames.length === 0) {
-    return { steps: [], total_expected_risk_reduction: 0, summary: "No medications analyzed.", warnings: [] };
-  }
-
-  // Rank drugs by the max severity of edges they participate in.
-  const sevRank: Record<Severity, number> = { low: 1, moderate: 2, high: 3, critical: 4 };
-  const drugWorstSeverity = new Map<string, Severity>();
-  const drugRationale = new Map<string, string>();
-  const drugPartner = new Map<string, string>(); // for substitute decisions
-
-  for (const e of graph?.edges ?? []) {
-    for (const d of [e.source, e.target]) {
-      const cur = drugWorstSeverity.get(d);
-      if (!cur || sevRank[e.severity] > sevRank[cur]) {
-        drugWorstSeverity.set(d, e.severity);
-        drugRationale.set(d, `${e.interaction_type}; paired with ${d === e.source ? e.target : e.source}`);
-        drugPartner.set(d, d === e.source ? e.target : e.source);
-      }
-    }
-  }
-
-  const ranked = drugNames
-    .map((d) => ({ drug: d, sev: drugWorstSeverity.get(d) ?? "low" as Severity }))
-    .sort((a, b) => sevRank[b.sev] - sevRank[a.sev]);
-
-  // Pick up to 4 steps focusing on worst offenders.
-  const topK = ranked.slice(0, Math.min(4, ranked.length));
-
-  // Decide action per drug using simple rules.
-  const SUBSTITUTES: Record<string, string> = {
-    "Omeprazole": "Pantoprazole",
-    "Amitriptyline": "Nortriptyline (lower anticholinergic load)",
-    "Diphenhydramine": "Loratadine (non-sedating)",
-    "Oxybutynin": "Mirabegron (non-anticholinergic)",
-    "Simvastatin": "Rosuvastatin (lower CYP3A4 interaction)",
-    "Aspirin": "Clopidogrel (if antiplatelet still required)",
-  };
-
-  const reductionForSev: Record<Severity, number> = { critical: 32, high: 22, moderate: 12, low: 5 };
-
-  const steps: DeprescribingStep[] = topK.map((item, i) => {
-    const { drug, sev } = item;
-    const baseReduction = reductionForSev[sev];
-
-    let action: DeprescribingAction = "monitor" as DeprescribingAction;
-    let substitute: string | undefined;
-    let timeline = "Re-assess in 2 weeks";
-    let monitoring = ["Clinical review at next visit"];
-
-    if (sev === "critical") {
-      if (SUBSTITUTES[drug]) {
-        action = "substitute";
-        substitute = SUBSTITUTES[drug];
-        timeline = "Cross-taper over 5–7 days";
-        monitoring = ["Monitor for rebound symptoms", "Re-check labs at day 7"];
-      } else {
-        action = "discontinue";
-        timeline = "Prompt clinical review recommended; evaluate whether an alternative is appropriate";
-        monitoring = ["Monitor for withdrawal", "Clinical review at 48 hours"];
-      }
-    } else if (sev === "high") {
-      if (SUBSTITUTES[drug]) {
-        action = "substitute";
-        substitute = SUBSTITUTES[drug];
-        timeline = "Cross-taper over 7 days";
-        monitoring = ["Monitor for efficacy loss", "Lab review at 2 weeks"];
-      } else {
-        action = "reduce";
-        timeline = "Reduce dose 50% over 7 days";
-        monitoring = ["Monitor response", "Re-check labs at day 14"];
-      }
-    } else if (sev === "moderate") {
-      action = "reduce";
-      timeline = "Reduce dose over 14 days if tolerated";
-      monitoring = ["Routine follow-up", "Repeat labs at 4 weeks"];
-    } else {
-      // low — monitor only, but action enum needs valid value. Use reduce with light taper as fallback.
-      action = "reduce";
-      timeline = "Continue with extended monitoring";
-      monitoring = ["Routine follow-up"];
-    }
-
-    return {
-      priority: i + 1,
-      drug,
-      action,
-      substitute,
-      monitoring,
-      expected_risk_reduction: baseReduction - i * 2, // later steps contribute marginally less
-      timeline,
-      rationale: drugRationale.get(drug) ?? `${sev[0].toUpperCase() + sev.slice(1)} severity profile flagged for review`,
-    };
-  });
-
-  const total = steps.reduce((sum, s) => sum + s.expected_risk_reduction, 0);
-
-  const warnings: string[] = [
-    "All deprescribing actions should be reviewed by the prescribing clinician.",
-    "Dose tapering schedules are estimates — individualize based on patient response.",
-  ];
-  if ((request?.patient?.age ?? 0) >= 75) {
-    warnings.unshift("Elderly patient — initiate changes one at a time with 7-day reassessment.");
-  }
-  if ((request?.patient?.ckd_stage ?? 0) >= 3) {
-    warnings.unshift("CKD stage ≥3 — adjust renally-cleared doses and monitor eGFR closely.");
-  }
-
-  return {
-    steps,
-    total_expected_risk_reduction: total,
-    summary: `${steps.length}-step deprescribing plan targeting the highest-severity interactions first. Estimated cumulative risk reduction: ${total}%.`,
-    warnings,
-  };
-}
-
 // ── Numeric risk score derivation ─────────────────────────
 // Used by the Overall Risk Assessment card. Previously hardcoded to
 // {low: 2.5, moderate: 5.0, ...}. Now biased by the demo graph so the big
@@ -622,7 +506,10 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
 
   const d = data.deprescribing_plan;
   const hasRealPlan = d && Array.isArray(d.steps) && d.steps.length > 0;
-  const resolvedDep = hasRealPlan ? d! : getDemoDeprescribingPlan(request, resolvedGraph);
+  // Real results never receive synthetic/demo deprescribing content: when
+  // the backend returned zero steps, the plan stays null and the export
+  // omits the section entirely.
+  const resolvedDep = hasRealPlan ? d! : null;
 
   const numScore = getNumericRiskScore(data, resolvedGraph, request);
   // Same rule as the on-screen report: derive label + color from the
@@ -630,11 +517,20 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
   // comment in the main report block for the rationale.
   const riskInfo = getRiskLevelFromScore(numScore);
 
+  // Medication count resolved from real backend sources only (never a
+  // fabricated 0), and narrative error guard: an upstream model/API error
+  // string must not be exported as if it were clinical narrative.
+  const resolvedMedCount = resolveMedicationCount(data, resolvedGraph, request);
+  const modelErr = isUpstreamModelError((report as any)?.raw_text ?? report?.report_text);
+  const modelNote = modelErr
+    ? `<div style="padding:10px 14px;margin-bottom:18px;border:1px solid rgba(249,115,22,0.35);background:rgba(249,115,22,0.08);border-radius:8px;color:#fbbf24;font-size:13px;line-height:1.5"><strong>Narrative summary temporarily unavailable.</strong> Structured clinical analysis remains available. Please retry later.</div>`
+    : "";
+
   const now = formatJakartaTime();
   const patientCtx = request?.patient || { age: 0, sex: "unknown", ckd_stage: 0, hepatic_impairment: false, smoking: false, comorbidities: [], allergies: [] } as any;
   const summary = report?.patient_summary
     ? { headline: report.patient_summary, bullets: [] as PatientSummaryData["bullets"] }
-    : buildPatientSummary(patientCtx, data, resolvedGraph, resolvedTemporal, resolvedDep);
+    : buildPatientSummary(patientCtx, data, resolvedGraph, resolvedTemporal, resolvedDep, request);
 
   // ── Section builders ──────────────────────────────────
 
@@ -705,7 +601,8 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
     </tr>`).join("");
 
   // Deprescribing section
-  const depRows = (resolvedDep.steps ?? []).map((s) => `
+  const depRows = resolvedDep && (resolvedDep.steps ?? []).length > 0
+    ? (resolvedDep.steps ?? []).map((s) => `
     <tr>
       <td>#${s.priority}</td>
       <td><strong>${esc(s.drug)}</strong></td>
@@ -714,7 +611,7 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
       <td class="reduction">-${s.expected_risk_reduction}%</td>
       <td>${esc(s.timeline ?? "—")}</td>
       <td>${esc(s.rationale ?? "")}</td>
-    </tr>`).join("");
+    </tr>`).join("") : "";
 
   // Phenotype section
   const phenoRows = `
@@ -928,7 +825,7 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
     <div class="meta">
       <h1 class="title">RxNexus Clinical Report</h1>
       <p class="sub">Patient-Specific Polypharmacy Intelligence</p>
-      <p class="sub">${report?.medication_count ?? 0} medications · ${now}</p>
+      <p class="sub">${resolvedMedCount !== undefined ? `${resolvedMedCount} medications · ` : ""}${now}</p>
     </div>
     <div class="rb">
       <div class="sc">${numScore.toFixed(1)}<span class="denom">/10</span></div>
@@ -939,6 +836,8 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
   <div class="interp">
     <p><strong>Interpretation:</strong> ${esc(riskInfo.description)}</p>
   </div>
+
+  ${modelNote}
 
   <h2>Patient Summary</h2>
   <p>${esc(summary.headline)}</p>
@@ -997,7 +896,7 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
     </table>
   ` : ""}
 
-  ${depRows ? `
+  ${resolvedDep && depRows ? `
     <h2>Deprescribing Plan</h2>
     <p>${esc(resolvedDep.summary ?? "")}</p>
     <table>
@@ -1893,11 +1792,14 @@ export default function ReportPage() {
   }, [data, request, effectiveGraph]);
 
   const effectiveDeprescribing = useMemo((): DeprescribingPlan | null => {
+    // REAL results only: when the backend returned zero deprescribing
+    // steps, the plan is null — never substituted with synthetic/demo
+    // recommendations. Absence of steps means "none returned", which the
+    // UI surfaces neutrally rather than as a promise of safety.
     const d = data?.deprescribing_plan;
     const hasRealPlan = d && Array.isArray(d.steps) && d.steps.length > 0;
-    if (hasRealPlan) return d!;
-    return getDemoDeprescribingPlan(request, effectiveGraph);
-  }, [data, request, effectiveGraph]);
+    return hasRealPlan ? d! : null;
+  }, [data]);
 
   const handleExportPDF = useCallback(() => {
     if (!data) return;
@@ -1941,7 +1843,10 @@ export default function ReportPage() {
   }
 
   const errors = data.errors ?? [];
-  const medCount = data.report?.medication_count ?? 0;
+  // Medication count resolved from real backend sources only. May be
+  // undefined when no source exists — callers must omit the count then,
+  // never display a fabricated 0.
+  const medCount = resolveMedicationCount(data, effectiveGraph, request);
   // Compute numScore first, then derive everything (label, color, scale-
   // reference highlight) from it. We DELIBERATELY ignore the LLM-emitted
   // `overall_risk_level` string here: that field has been observed to
@@ -1993,7 +1898,198 @@ export default function ReportPage() {
   // empty; otherwise compute both from the request + viz data.
   const patientSummary: PatientSummaryData = data.report?.patient_summary
     ? { headline: data.report.patient_summary, bullets: [] }
-    : buildPatientSummary(patientCtx, data, effectiveGraph, effectiveTemporal, effectiveDeprescribing);
+    : buildPatientSummary(patientCtx, data, effectiveGraph, effectiveTemporal, effectiveDeprescribing, request);
+
+  // ── Clinical Overview + Review Priorities (dashboard lead-in) ──────────
+  // Backed exclusively by fields the backend returns in the response.
+  // Severity splits are presentation-level counts from returned arrays;
+  // nothing here invents a metric the backend does not expose.
+  const hubName = effectiveGraph?.hub_drugs?.[0];
+  const hubNode = effectiveGraph?.nodes?.find((n) => n.drug_name === hubName);
+  const renalAssessment = data.report?.renal_assessment;
+  const renalSummary = renalAssessment
+    ? {
+        flagged: Array.isArray(renalAssessment.flagged) ? renalAssessment.flagged.length : 0,
+        egfrRange: renalAssessment.estimated_egfr_range || undefined,
+        ckdStage: typeof renalAssessment.ckd_stage === "number" ? renalAssessment.ckd_stage : undefined,
+      }
+    : undefined;
+
+  // Prefer raw_interactions (has full descriptions + evidence metadata);
+  // fall back to graph edges so the split still matches a rendered graph.
+  const rawInteractionList = data.raw_interactions?.interactions ?? [];
+  const severityPool: string[] =
+    rawInteractionList.length > 0
+      ? rawInteractionList.map((ix) => (ix.severity ?? "").toLowerCase())
+      : (effectiveGraph?.edges ?? []).map((e) => (e.severity ?? "").toLowerCase());
+  const criticalCount = severityPool.filter((s) => s === "critical").length;
+  const highCount = severityPool.filter((s) => s === "high").length;
+
+  // Priority items: critical/high interaction pairs first, then
+  // deprescribing steps, capped at five — top of dashboard.
+  const buildPriorityItems = (): ReviewPriorityItem[] => {
+    const items: ReviewPriorityItem[] = [];
+    const highInteractions = rawInteractionList.filter((ix) => {
+      const s = (ix.severity ?? "").toLowerCase();
+      return s === "critical" || s === "high";
+    });
+    for (const ix of highInteractions) {
+      if (items.length >= 5) break;
+      const s = (ix.severity ?? "").toLowerCase();
+      items.push({
+        id: ix.id ?? `ix-${items.length}`,
+        title: (ix.drugs ?? []).join(" + ") || "Interaction",
+        badge: s,
+        badgeColor: SEVERITY_COLORS[s] ?? "#94a8c8",
+        description:
+          ix.description ||
+          ix.mechanism ||
+          "Potential interaction flagged for clinical review.",
+        actionLabel:
+          ix.evidence_grade || ix.confidence_score != null
+            ? "Evidence-graded interaction"
+            : "Clinical review recommended",
+        evidence:
+          ix.confidence_score != null
+            ? `Confidence ${ix.confidence_score}%`
+            : ix.evidence_grade
+              ? `Evidence: ${ix.evidence_grade}`
+              : undefined,
+      });
+    }
+    if (items.length < 5) {
+      const steps = Array.isArray(effectiveDeprescribing?.steps)
+        ? [...effectiveDeprescribing.steps].sort((a, b) => a.priority - b.priority)
+        : [];
+      for (const step of steps) {
+        if (items.length >= 5) break;
+        items.push({
+          id: `step-${step.drug}`,
+          title: step.drug,
+          badge: `Priority ${step.priority}`,
+          badgeColor: "#a78bfa",
+          description: step.rationale || "Review flagged for clinical assessment.",
+          actionLabel: getActionLabel(step.action),
+          evidence:
+            typeof step.expected_risk_reduction === "number"
+              ? `~${step.expected_risk_reduction}% potential risk reduction`
+              : undefined,
+          timeline: step.timeline,
+        });
+      }
+    }
+    return items;
+  };
+  const priorityItems = buildPriorityItems();
+
+  // Patient / Regimen Summary card — hoisted into a variable so it can be
+  // rendered as the FIRST report section (before Clinical Overview → Review
+  // Priorities → 3D graph + details). Age/sex/context come from the existing
+  // request state; medication count uses the real-source resolver and is
+  // omitted when unavailable (never a fabricated 0).
+  const regimenNames = extractDrugNames(request).map(titleCase);
+  const patientSummaryCard = (
+    <HoverCard delay={0.2}>
+      <h3 className="font-display font-semibold text-xs uppercase tracking-wider mb-3" style={{ color: "var(--primary)" }}>Patient / Regimen Summary</h3>
+      <div className="flex flex-col items-center sm:flex-row sm:items-stretch gap-4">
+        <div className="w-32 sm:w-28 flex-shrink-0 rounded-lg overflow-hidden aspect-[3/4] sm:aspect-auto sm:self-stretch sm:min-h-[220px]" style={{ border: "1px solid rgba(6,182,212,0.25)", background: "rgba(2,8,23,0.9)" }}>
+          <Scene camera={{ position: [0, 0, 3.5], fov: 45 }}>
+            <PatientAvatar3D sex={(patientCtx as any).sex || "unknown"} />
+          </Scene>
+        </div>
+        <div className="w-full sm:flex-1 sm:min-w-0 flex flex-col">
+          <p className="text-sm leading-relaxed mb-2.5" style={{ color: "#eaf0fa" }}>
+            {patientSummary.headline}
+          </p>
+          {medCount !== undefined && (
+            <p className="text-[11px] mb-2.5 font-mono" style={{ color: "#7a8ba8" }}>
+              {medCount} medications analyzed
+            </p>
+          )}
+          {regimenNames.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2.5">
+              {regimenNames.map((name) => (
+                <span
+                  key={name}
+                  className="text-[10px] font-mono px-2 py-0.5 rounded"
+                  style={{ background: "rgba(6,182,212,0.08)", border: "1px solid rgba(6,182,212,0.25)", color: "#a5d8ff" }}
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
+          )}
+          {patientSummary.bullets.length > 0 && (
+            <div className="space-y-1.5 mb-2 flex-1">
+              {patientSummary.bullets.map((b, i) => {
+                const c = b.color ?? "#06b6d4";
+                return (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between gap-2 text-[11px] px-2.5 py-1.5 rounded-md"
+                    style={{
+                      background: `${c}0c`,
+                      border: `1px solid ${c}26`,
+                      transition: "background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease",
+                      cursor: "default",
+                    }}
+                    onMouseEnter={(e) => {
+                      const el = e.currentTarget;
+                      el.style.background = `${c}1f`;
+                      el.style.borderColor = `${c}66`;
+                      el.style.boxShadow = `0 0 10px ${c}33`;
+                    }}
+                    onMouseLeave={(e) => {
+                      const el = e.currentTarget;
+                      el.style.background = `${c}0c`;
+                      el.style.borderColor = `${c}26`;
+                      el.style.boxShadow = "none";
+                    }}
+                  >
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="shrink-0" style={{ color: c }}>●</span>
+                      <span className="truncate" style={{ color: "#94a8c8" }}>{b.label}</span>
+                    </span>
+                    <span className="font-mono font-bold shrink-0" style={{ color: c }}>
+                      {b.value}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+            {[
+              { label: "Interactions", value: totalInteractions, bg: "rgba(6,182,212,0.06)", border: "rgba(6,182,212,0.15)", color: "#eaf0fa", hoverBg: "rgba(6,182,212,0.12)" },
+              { label: "Risk", value: `${numScore.toFixed(1)}/10`, bg: riskInfo.bgColor, border: `${riskInfo.color}22`, color: riskInfo.color, hoverBg: `${riskInfo.color}18` },
+              { label: "Critical", value: (effectiveGraph?.edges ?? []).filter(e => e.severity === "critical").length, bg: "rgba(255,0,64,0.06)", border: "rgba(255,0,64,0.18)", color: "#ff0040", hoverBg: "rgba(255,0,64,0.14)" },
+              { label: "Deprescribe", value: `${(effectiveDeprescribing?.steps ?? []).length} steps`, bg: "rgba(16,185,129,0.06)", border: "rgba(16,185,129,0.15)", color: "#10b981", hoverBg: "rgba(16,185,129,0.12)" },
+            ].map((stat, i) => (
+              <div key={i} className="px-2 py-1 rounded"
+                style={{
+                  background: stat.bg,
+                  border: `1px solid ${stat.border}`,
+                  transition: "all 0.3s ease",
+                  cursor: "default",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = stat.hoverBg;
+                  e.currentTarget.style.boxShadow = `0 0 12px ${stat.border}`;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = stat.bg;
+                  e.currentTarget.style.boxShadow = "none";
+                }}
+              >
+                <span style={{ color: "#8a9bba" }}>{stat.label}:</span>{" "}
+                <span className="font-mono font-bold" style={{ color: stat.color }}>{stat.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </HoverCard>
+  );
 
   return (
     <><GridBackground /><DataStream position="top-right" /><DataStream position="bottom-left" lines={5} />
@@ -2008,7 +2104,7 @@ export default function ReportPage() {
               <span className="text-xs tracking-widest uppercase" style={{ fontFamily: "var(--font-display)", color: "var(--success)" }}>Analysis Complete</span>
             </div>
             <h1 className="font-display font-bold text-3xl sm:text-4xl text-gradient mb-1">Clinical Report</h1>
-            <p style={{ color: "#7a8ba8" }} className="text-sm">{medCount} medications analyzed · {formatJakartaTime()}{errors.length > 0 && <span className="ml-2" style={{ color: "var(--warning)" }}>({errors.length} warning{errors.length !== 1 ? "s" : ""})</span>}</p>
+            <p style={{ color: "#7a8ba8" }} className="text-sm">{medCount !== undefined && <>{medCount} medications analyzed · </>}{formatJakartaTime()}{errors.length > 0 && <span className="ml-2" style={{ color: "var(--warning)" }}>({errors.length} warning{errors.length !== 1 ? "s" : ""})</span>}</p>
           </div>
           <div className="flex gap-2 flex-wrap">
             {[
@@ -2057,6 +2153,36 @@ export default function ReportPage() {
           require review by a qualified healthcare professional and should
           not be used as autonomous prescribing instructions.
         </div>
+
+        {/* ── Report hierarchy: Patient / Regimen Summary leads, then
+            Clinical Overview, then Review Priorities, then the 3D
+            visualization + full details. ── */}
+        {patientSummaryCard}
+
+        <ClinicalOverview
+          score={numScore}
+          riskInfo={riskInfo}
+          medications={medCount}
+          interactions={{
+            count: totalInteractions,
+            critical: criticalCount,
+            high: highCount,
+          }}
+          hub={
+            hubName && effectiveGraph
+              ? {
+                  drug: hubName,
+                  degree: hubNode?.degree ?? 0,
+                  hubScore: hubNode?.hub_score ?? 0,
+                  isHub: hubNode?.is_hub ?? false,
+                }
+              : undefined
+          }
+          renal={renalSummary}
+          burden={data.report?.burden_scores}
+        />
+
+        <ClinicalReviewPriorities items={priorityItems} />
 
         {/* ── Main grid: stack on mobile, side-by-side on desktop ──
             On desktop the left column (3D viz + interpretation panel) is
@@ -2393,113 +2519,6 @@ export default function ReportPage() {
               </div>
             </HoverCard>
 
-            {/* Patient Summary — hover glow, aligned border */}
-            <HoverCard delay={0.2}>
-              <h3 className="font-display font-semibold text-xs uppercase tracking-wider mb-3" style={{ color: "var(--primary)" }}>Patient Summary</h3>
-              {/* Mobile: stack vertically with the 3D body centered above the
-                  text content. Desktop (≥ sm): the original side-by-side
-                  layout with the body on the left and content on the right. */}
-              <div className="flex flex-col items-center sm:flex-row sm:items-stretch gap-4">
-                {/* 3D Body — on mobile, narrower (w-32 = 128px) and centered
-                    via the parent's items-center; on desktop reverts to the
-                    original w-28 anchor with self-stretch so the right column
-                    matches its height. */}
-                <div className="w-32 sm:w-28 flex-shrink-0 rounded-lg overflow-hidden aspect-[3/4] sm:aspect-auto sm:self-stretch sm:min-h-[220px]" style={{ border: "1px solid rgba(6,182,212,0.25)", background: "rgba(2,8,23,0.9)" }}>
-                  <Scene camera={{ position: [0, 0, 3.5], fov: 45 }}>
-                    <PatientAvatar3D sex={(patientCtx as any).sex || "unknown"} />
-                  </Scene>
-                </div>
-                {/* Right column — flex-col so content distributes across the
-                    card's height on desktop. On mobile w-full so the text is
-                    full-width below the centered body. */}
-                <div className="w-full sm:flex-1 sm:min-w-0 flex flex-col">
-                  {/* Headline */}
-                  <p className="text-sm leading-relaxed mb-2.5" style={{ color: "#eaf0fa" }}>
-                    {patientSummary.headline}
-                  </p>
-                  <p className="text-[11px] mb-2.5 font-mono" style={{ color: "#7a8ba8" }}>
-                    {medCount} medications analyzed
-                  </p>
-                  {/* Structured bullets — each now a bordered box with hover
-                      color animation, matching the Quick Stats grid below. */}
-                  {patientSummary.bullets.length > 0 && (
-                    <div className="space-y-1.5 mb-2 flex-1">
-                      {patientSummary.bullets.map((b, i) => {
-                        const c = b.color ?? "#06b6d4";
-                        return (
-                          <div
-                            key={i}
-                            className="flex items-center justify-between gap-2 text-[11px] px-2.5 py-1.5 rounded-md"
-                            style={{
-                              background: `${c}0c`,
-                              border: `1px solid ${c}26`,
-                              transition: "background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease",
-                              cursor: "default",
-                            }}
-                            onMouseEnter={(e) => {
-                              const el = e.currentTarget;
-                              el.style.background = `${c}1f`;
-                              el.style.borderColor = `${c}66`;
-                              el.style.boxShadow = `0 0 10px ${c}33`;
-                            }}
-                            onMouseLeave={(e) => {
-                              const el = e.currentTarget;
-                              el.style.background = `${c}0c`;
-                              el.style.borderColor = `${c}26`;
-                              el.style.boxShadow = "none";
-                            }}
-                          >
-                            <span className="flex items-center gap-1.5 min-w-0">
-                              <span className="shrink-0" style={{ color: c }}>●</span>
-                              <span className="truncate" style={{ color: "#94a8c8" }}>{b.label}</span>
-                            </span>
-                            <span className="font-mono font-bold shrink-0" style={{ color: c }}>
-                              {b.value}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {/* Quick stats — with hover animation.
-                      "Interactions" uses `totalInteractions` (pairwise +
-                      emergent multi-drug) so the number matches the
-                      "Detected Interactions (N)" header and the
-                      "Interaction Summary" sentence. Previously this
-                      counted only graph edges, which excluded emergent
-                      multi-drug interactions and produced an inconsistent
-                      "4" on the card while every other section said "7". */}
-                  <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-                    {[
-                      { label: "Interactions", value: totalInteractions, bg: "rgba(6,182,212,0.06)", border: "rgba(6,182,212,0.15)", color: "#eaf0fa", hoverBg: "rgba(6,182,212,0.12)" },
-                      { label: "Risk", value: `${numScore.toFixed(1)}/10`, bg: riskInfo.bgColor, border: `${riskInfo.color}22`, color: riskInfo.color, hoverBg: `${riskInfo.color}18` },
-                      { label: "Critical", value: (effectiveGraph?.edges ?? []).filter(e => e.severity === "critical").length, bg: "rgba(255,0,64,0.06)", border: "rgba(255,0,64,0.18)", color: "#ff0040", hoverBg: "rgba(255,0,64,0.14)" },
-                      { label: "Deprescribe", value: `${(effectiveDeprescribing?.steps ?? []).length} steps`, bg: "rgba(16,185,129,0.06)", border: "rgba(16,185,129,0.15)", color: "#10b981", hoverBg: "rgba(16,185,129,0.12)" },
-                    ].map((stat, i) => (
-                      <div key={i} className="px-2 py-1 rounded"
-                        style={{
-                          background: stat.bg,
-                          border: `1px solid ${stat.border}`,
-                          transition: "all 0.3s ease",
-                          cursor: "default",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = stat.hoverBg;
-                          e.currentTarget.style.boxShadow = `0 0 12px ${stat.border}`;
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = stat.bg;
-                          e.currentTarget.style.boxShadow = "none";
-                        }}
-                      >
-                        <span style={{ color: "#8a9bba" }}>{stat.label}:</span>{" "}
-                        <span className="font-mono font-bold" style={{ color: stat.color }}>{stat.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </HoverCard>
 
             <RiskReport data={data} />
           </div>
@@ -2536,6 +2555,7 @@ function buildPatientSummary(
   graph: InteractionGraph | null,
   temporal: CascadeModel | null,
   deprescribing: DeprescribingPlan | null,
+  request?: AnalyzeRequest | null,
 ): PatientSummaryData {
   // Headline: "72-year-old female with CKD stage 3, hepatic impairment"
   const age = patient.age ?? 0;
@@ -2553,8 +2573,8 @@ function buildPatientSummary(
 
   // Bullets — key stats with bold values
   const bullets: PatientSummaryData["bullets"] = [];
-  const medCount = data.report?.medication_count ?? 0;
-  if (medCount > 0) {
+  const medCount = resolveMedicationCount(data, graph, request);
+  if (typeof medCount === "number") {
     bullets.push({ label: "Medications on record", value: String(medCount) });
   }
 
