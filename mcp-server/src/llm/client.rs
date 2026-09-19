@@ -301,7 +301,7 @@ impl OpenRouterClient {
         let body = resp.text().await.unwrap_or_default();
 
         if !status.is_success() {
-            let parsed: OrErrorResponse = serde_json::from_str(&body).ok();
+            let parsed: Option<OrErrorResponse> = serde_json::from_str(&body).ok();
             let detail = parsed
                 .and_then(|e| e.error)
                 .and_then(|e| e.message)
