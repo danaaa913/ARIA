@@ -1,0 +1,65 @@
+name: Publish OpenRouter MCP image
+
+on:
+  push:
+    branches:
+      - feature/openrouter-llm-routing
+    paths:
+      - "mcp-server/**"
+      - ".github/workflows/publish-openrouter-mcp.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-openrouter-mcp-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: ghcr.io/danaaa913/aria-mcp-server
+
+jobs:
+  build-and-push:
+    name: Build and push MCP server to GHCR
+    if: github.ref == 'refs/heads/feature/openrouter-llm-routing'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image tags
+        id: tags
+        shell: bash
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          echo "commit=${IMAGE_NAME}:openrouter-${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "branch=${IMAGE_NAME}:openrouter-branch" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push MCP image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./mcp-server
+          file: ./mcp-server/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.commit }}
+            ${{ steps.tags.outputs.branch }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Publish summary
+        run: |
+          echo "### Published MCP images" >> "$GITHUB_STEP_SUMMARY"
+          echo "- `${{ steps.tags.outputs.commit }}`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- `${{ steps.tags.outputs.branch }}`" >> "$GITHUB_STEP_SUMMARY"
