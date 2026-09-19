@@ -8,6 +8,7 @@ import { PatientForm } from "@/components/forms/PatientForm";
 import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import { GridBackground } from "@/components/effects/GridBackground";
 import type { AnalyzeRequest, AnalyzeResponse } from "@/lib/types";
+import { clearSnapshot, writeSnapshot } from "@/lib/reportSnapshot";
 
 const Scene = dynamic(
   () => import("@/components/3d/Scene").then((m) => ({ default: m.Scene })),
@@ -44,6 +45,15 @@ export default function AnalyzePage() {
   const handleSubmit = async (request: AnalyzeRequest) => {
     setIsLoading(true);
     setError(null);
+    // A NEW analysis supersedes any prior report: clear the active snapshot
+    // (and the pre-fix legacy analysis keys) before running, so a stale
+    // completed analysis can never survive into the new run. If this run
+    // fails, no report is available — that is honest.
+    try {
+      clearSnapshot(sessionStorage);
+    } catch {
+      // ignore storage errors; the snapshot is replaced on success anyway
+    }
 
     try {
       const resp = await fetch("/api/analyze", {
@@ -58,8 +68,9 @@ export default function AnalyzePage() {
       }
 
       const data: AnalyzeResponse = await resp.json();
-      sessionStorage.setItem("rxnexus-result", JSON.stringify(data));
-      sessionStorage.setItem("rxnexus-request", JSON.stringify(request));
+      // Store request + response as ONE coherent analysis snapshot so the
+      // report page can never mix an older response with the current request.
+      writeSnapshot(sessionStorage, request, data);
       router.push("/report");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";

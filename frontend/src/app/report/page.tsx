@@ -16,12 +16,20 @@ import type {
   InteractionGraph,
   CascadeModel,
   DeprescribingPlan,
-  InterventionWindow,
   Severity,
 } from "@/lib/types";
 import { getActionLabel } from "@/lib/severity";
 import { resolveMedicationCount } from "@/lib/medicationCount";
 import { isUpstreamModelError } from "@/lib/narrative";
+import { EvidenceSummary } from "@/components/report/EvidenceSummary";
+import {
+  resolveGraph as resolveRealGraph,
+  resolveTemporal as resolveRealTemporal,
+  resolveDeprescribing as resolveRealDeprescribing,
+  resolveInteractionTotals,
+  rawInteractionList as snapshotInteractions,
+  readSnapshot,
+} from "@/lib/reportSnapshot";
 
 const Scene = dynamic(
   () => import("@/components/3d/Scene").then((m) => ({ default: m.Scene })),
@@ -165,21 +173,16 @@ function getNumericRiskScore(
 }
 
 // ══════════════════════════════════════════════════════════
-// DEMO FALLBACK DATA — rich, deterministic, patient-aware
+// REQUEST-DERIVED HELPERS
 // ══════════════════════════════════════════════════════════
 //
-// Goal: whatever the user types in the form (or any of the Quick Test
-// profiles), every visualization fills with realistic, internally-consistent
-// data. No Math.random — fully deterministic from the request so the demo
-// looks the same every reload.
-//
-// Strategy:
-//   1. Extract drug names from request, lowercase them.
-//   2. Match pairs against a small curated interaction KB. Any unmatched
-//      pairs still get a sensible default edge so the graph is never empty.
-//   3. Build a phenotype multiplier from age / CKD / hepatic / smoking.
-//   4. Synthesize graph → timeline → deprescribing plan all from the same
-//      severity distribution so they agree with each other.
+// The report is a STRICT single-source-of-truth view of ONE completed
+// analysis. Demo fixtures (Quick Test profiles / SAMPLE_PROFILES) are used
+// ONLY to prefill the Analyze form; synthetic graph/timeline/plan builders
+// were removed so demo data can never populate report metrics. The helpers
+// below are request-derived utilities only — drug-name normalization and
+// the risk-score derivation path used when the backend did not ship an
+// authoritative numeric overall score.
 
 // ── Utilities ─────────────────────────────────────────────
 
@@ -195,17 +198,6 @@ function titleCase(s: string): string {
   return s.trim().split(/\s+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
 }
 
-/** Deterministic pseudo-random in [0,1) from a string seed. Used to give
- *  variety without using Math.random (which would re-roll every render). */
-function hash01(seed: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return ((h >>> 0) % 10000) / 10000;
-}
-
 function phenotypeMultiplier(request: AnalyzeRequest | null): number {
   const p = request?.patient;
   if (!p) return 1.0;
@@ -218,251 +210,6 @@ function phenotypeMultiplier(request: AnalyzeRequest | null): number {
   if (p.smoking) m *= 1.08;
   if (p.sex === "female") m *= 1.04;
   return m;
-}
-
-// ── Interaction knowledge base ────────────────────────────
-// Keys are sorted-alphabetically pairs joined with "|". Severity is the
-// BASE severity before phenotype adjustment.
-
-interface KBEntry {
-  severity: Severity;
-  weight: number;          // 0..1 edge weight
-  type: string;            // interaction_type
-  rationale: string;       // for deprescribing "rationale" and graph tooltip
-}
-
-const INTERACTION_KB: Record<string, KBEntry> = {
-  "aspirin|warfarin":            { severity: "critical", weight: 0.95, type: "pharmacodynamic — additive anticoagulation", rationale: "Additive bleeding risk: platelet inhibition + vitamin K antagonism" },
-  "fish oil|warfarin":           { severity: "high",     weight: 0.85, type: "pharmacodynamic — additive anticoagulation", rationale: "Omega-3 potentiates anticoagulant effect; elevated bleeding risk" },
-  "aspirin|fish oil":            { severity: "moderate", weight: 0.6,  type: "pharmacodynamic — additive anticoagulation", rationale: "Additive antiplatelet activity" },
-  "omeprazole|warfarin":         { severity: "high",     weight: 0.75, type: "pharmacokinetic — CYP2C19 inhibition", rationale: "Omeprazole inhibits CYP2C19 → ↑ warfarin exposure → ↑ INR" },
-  "digoxin|furosemide":          { severity: "high",     weight: 0.8,  type: "pharmacodynamic — electrolyte-mediated", rationale: "Furosemide-induced hypokalemia potentiates digoxin toxicity" },
-  "amlodipine|simvastatin":      { severity: "high",     weight: 0.78, type: "pharmacokinetic — CYP3A4 inhibition", rationale: "Amlodipine ↑ simvastatin exposure → ↑ myopathy/rhabdomyolysis risk" },
-  "lisinopril|metformin":        { severity: "moderate", weight: 0.55, type: "pharmacokinetic — renal clearance", rationale: "Both cleared renally; monitor eGFR and lactate" },
-  "lisinopril|furosemide":       { severity: "moderate", weight: 0.6,  type: "pharmacodynamic — hypotension/AKI", rationale: "Additive hypotension; risk of acute kidney injury" },
-  "digoxin|amiodarone":          { severity: "critical", weight: 0.92, type: "pharmacokinetic — P-gp inhibition", rationale: "Amiodarone doubles digoxin levels; high toxicity risk" },
-  "amitriptyline|diphenhydramine":{severity: "critical", weight: 0.9,  type: "pharmacodynamic — anticholinergic burden", rationale: "Severe additive anticholinergic load — delirium/fall risk in elderly" },
-  "oxybutynin|diphenhydramine":  { severity: "high",     weight: 0.82, type: "pharmacodynamic — anticholinergic burden", rationale: "Additive anticholinergic effects — cognitive impairment" },
-  "amitriptyline|oxybutynin":    { severity: "high",     weight: 0.8,  type: "pharmacodynamic — anticholinergic burden", rationale: "Compounded anticholinergic effects and QT prolongation risk" },
-  "amitriptyline|sertraline":    { severity: "high",     weight: 0.75, type: "pharmacodynamic — serotonergic", rationale: "↑ serotonin syndrome risk; additive QT prolongation" },
-  "quetiapine|sertraline":       { severity: "moderate", weight: 0.65, type: "pharmacodynamic — QT prolongation", rationale: "Additive QT prolongation risk; monitor ECG" },
-  "amitriptyline|quetiapine":    { severity: "high",     weight: 0.78, type: "pharmacodynamic — sedation + QT", rationale: "Additive sedation, anticholinergic and QT effects" },
-  "gabapentin|metoprolol":       { severity: "low",      weight: 0.3,  type: "pharmacodynamic — CNS depression", rationale: "Mild additive CNS depression" },
-  "metformin|metoprolol":        { severity: "moderate", weight: 0.5,  type: "pharmacodynamic — hypoglycemia masking", rationale: "β-blocker may mask hypoglycemia symptoms" },
-  "simvastatin|warfarin":        { severity: "moderate", weight: 0.6,  type: "pharmacokinetic — protein binding", rationale: "May modestly ↑ INR; monitor after initiation" },
-};
-
-function kbLookup(a: string, b: string): KBEntry | null {
-  const key = [a.toLowerCase().trim(), b.toLowerCase().trim()].sort().join("|");
-  return INTERACTION_KB[key] ?? null;
-}
-
-function bumpSeverity(sev: Severity, multiplier: number): Severity {
-  const order: Severity[] = ["low", "moderate", "high", "critical"];
-  const i = order.indexOf(sev);
-  // Only escalate for genuinely high-risk phenotypes (≥1.4x). The threshold
-  // is set so the 81M Poly profile (mult=1.35) keeps its natural severity
-  // mix, while the 72F CKD3 profile (mult=1.47) visibly escalates.
-  if (multiplier >= 1.4) return order[Math.min(i + 1, 3)];
-  return sev;
-}
-
-// ── Graph builder ─────────────────────────────────────────
-
-function getDemoInteractionGraph(request: AnalyzeRequest | null): InteractionGraph {
-  const rawDrugs = extractDrugNames(request);
-  const drugNames = rawDrugs.map(titleCase);
-  const multiplier = phenotypeMultiplier(request);
-
-  // Compute node degrees by scanning KB pairs first (we need degree to know hubs).
-  const edges: InteractionGraph["edges"] = [];
-  const degree = new Map<string, number>();
-  for (const d of drugNames) degree.set(d, 0);
-
-  for (let i = 0; i < drugNames.length; i++) {
-    for (let j = i + 1; j < drugNames.length; j++) {
-      const a = drugNames[i];
-      const b = drugNames[j];
-      let hit = kbLookup(a, b);
-
-      // Fallback for unknown pairs: deterministic severity from name hash,
-      // but bias toward "low/moderate" so the graph isn't overwhelmingly red
-      // for random drug combos.
-      if (!hit) {
-        const r = hash01(`${a}|${b}`);
-        if (r < 0.35) {
-          // No interaction — skip the edge to avoid a fully-connected mess.
-          continue;
-        }
-        const sev: Severity = r < 0.6 ? "low" : r < 0.85 ? "moderate" : "high";
-        hit = {
-          severity: sev,
-          weight: 0.3 + r * 0.5,
-          type: "pharmacokinetic — potential CYP interaction",
-          rationale: "Potential interaction flagged for clinical review",
-        };
-      }
-
-      const adjustedSeverity = bumpSeverity(hit.severity, multiplier);
-      edges.push({
-        source: a,
-        target: b,
-        severity: adjustedSeverity,
-        interaction_type: hit.type,
-        weight: Math.min(hit.weight * multiplier, 1),
-      });
-      degree.set(a, (degree.get(a) ?? 0) + 1);
-      degree.set(b, (degree.get(b) ?? 0) + 1);
-    }
-  }
-
-  // Guarantee a non-empty graph: if no edges at all (e.g. 1 unknown drug),
-  // add one synthetic moderate self-relation with phenotype so viz still renders.
-  if (edges.length === 0 && drugNames.length >= 2) {
-    edges.push({
-      source: drugNames[0],
-      target: drugNames[1],
-      severity: "moderate",
-      interaction_type: "potential — clinical review advised",
-      weight: 0.4,
-    });
-    degree.set(drugNames[0], 1);
-    degree.set(drugNames[1], 1);
-  }
-
-  // Identify hub(s): the drug with the most edges, only if it has >=2.
-  let maxDeg = 0;
-  for (const d of degree.values()) if (d > maxDeg) maxDeg = d;
-  const hubDrugs = drugNames.filter((d) => (degree.get(d) ?? 0) === maxDeg && maxDeg >= 2);
-
-  const nodes = drugNames.map((d) => {
-    const deg = degree.get(d) ?? 0;
-    const isHub = hubDrugs.includes(d);
-    return {
-      drug_name: d,
-      degree: deg,
-      is_hub: isHub,
-      hub_score: maxDeg > 0 ? deg / maxDeg : 0,
-    };
-  });
-
-  // Emergent 3-drug interactions: detect additive anticoagulant / anticholinergic clusters.
-  const emergent: InteractionGraph["emergent_interactions"] = [];
-  const lowerSet = new Set(drugNames.map((d) => d.toLowerCase()));
-
-  const anticoagTriad = ["warfarin", "aspirin", "fish oil"];
-  if (anticoagTriad.every((d) => lowerSet.has(d))) {
-    emergent.push({
-      drugs: anticoagTriad.map(titleCase),
-      description: "Triple anticoagulant effect — no pairwise checker captures the combined bleeding risk",
-      mechanism: "Vitamin K antagonism + platelet inhibition + omega-3 platelet aggregation inhibition",
-      severity: multiplier >= 1.2 ? "critical" : "high",
-    });
-  }
-
-  const antichol = ["amitriptyline", "diphenhydramine", "oxybutynin", "quetiapine"];
-  const matchedAntichol = antichol.filter((d) => lowerSet.has(d));
-  if (matchedAntichol.length >= 3) {
-    emergent.push({
-      drugs: matchedAntichol.slice(0, 3).map(titleCase),
-      description: "Severe cumulative anticholinergic burden — delirium and fall risk",
-      mechanism: "Multiplicative muscarinic receptor antagonism",
-      severity: "critical",
-    });
-  }
-
-  const totalPossible = (drugNames.length * (drugNames.length - 1)) / 2;
-
-  return {
-    nodes,
-    edges,
-    hub_drugs: hubDrugs,
-    emergent_interactions: emergent,
-    total_edges: edges.length,
-    graph_density: totalPossible > 0 ? edges.length / totalPossible : 0,
-  };
-}
-
-// ── Timeline builder ──────────────────────────────────────
-
-function getDemoTemporalModel(request: AnalyzeRequest | null, graph?: InteractionGraph | null): CascadeModel {
-  const drugNames = extractDrugNames(request).map(titleCase);
-  const multiplier = phenotypeMultiplier(request);
-
-  // Derive peak severity from graph so curve agrees with graph edges.
-  const severities = (graph?.edges ?? []).map((e) => e.severity);
-  const maxSev: Severity =
-    severities.includes("critical") ? "critical" :
-    severities.includes("high") ? "high" :
-    severities.includes("moderate") ? "moderate" :
-    severities.length > 0 ? "low" : "moderate";
-
-  const peakTable: Record<Severity, number> = { low: 3.2, moderate: 5.0, high: 7.2, critical: 8.8 };
-  const peakScore = Math.min(peakTable[maxSev] * (multiplier > 1.2 ? 1.08 : 1), 9.5);
-
-  const days = 30;
-  // Peak day shifts with patient age: elderly = earlier peak (faster accumulation).
-  const age = request?.patient?.age ?? 50;
-  const peakDay = age >= 75 ? 5 : age >= 65 ? 7 : 10;
-
-  const daily_risk = Array.from({ length: days }, (_, i) => {
-    const day = i + 1;
-    let risk: number;
-    if (day <= peakDay) {
-      // Ramp up from ~1.5 to peak
-      risk = 1.5 + (day / peakDay) * (peakScore - 1.5);
-    } else {
-      // Slow decay toward a steady-state around 60% of peak
-      const decayProgress = (day - peakDay) / (days - peakDay);
-      risk = peakScore - decayProgress * (peakScore * 0.4);
-    }
-    // Deterministic wobble from day hash
-    const wobble = (hash01(`${drugNames.join(",")}-d${day}`) - 0.5) * 0.6;
-    risk = Math.round((risk + wobble) * 10) / 10;
-    risk = Math.max(1, Math.min(risk, 9.8));
-
-    let key_event: string | undefined;
-    if (day === 1) key_event = "Initial exposure";
-    else if (day === peakDay) key_event = "Peak interaction window";
-    else if (day === Math.floor(days / 2)) key_event = "Mid-course monitoring checkpoint";
-    else if (day === days) key_event = "Re-assessment due";
-
-    return { day, risk_score: risk, key_event };
-  });
-
-  // Intervention windows anchored to peak and mid-course.
-  const intervention_windows: InterventionWindow[] = [];
-  if (maxSev === "critical" || maxSev === "high") {
-    intervention_windows.push({
-      day_start: Math.max(peakDay - 2, 1),
-      day_end: peakDay + 1,
-      action: "Intensify monitoring",
-      urgency: "high",
-    });
-  } else {
-    intervention_windows.push({
-      day_start: Math.max(peakDay - 1, 1),
-      day_end: peakDay + 2,
-      action: "Standard monitoring",
-      urgency: "standard",
-    });
-  }
-  intervention_windows.push({
-    day_start: Math.floor(days / 2),
-    day_end: Math.floor(days / 2) + 3,
-    action: "Dose review checkpoint",
-    urgency: "standard",
-  });
-
-  return {
-    drugs: drugNames,
-    timeline_days: days,
-    daily_risk,
-    peak_risk_day: peakDay,
-    peak_risk_score: Math.max(...daily_risk.map((d) => d.risk_score)),
-    intervention_windows,
-    summary: `Risk peaks around day ${peakDay} at ~${peakScore.toFixed(1)}/10 driven by ${maxSev}-severity interactions. Phenotype multiplier ×${multiplier.toFixed(2)} applied for age/renal/hepatic adjustments.`,
-  };
 }
 
 // ── Numeric risk score derivation ─────────────────────────
@@ -494,22 +241,13 @@ function deriveNumericRiskFromGraph(graph: InteractionGraph | null, multiplier: 
 function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | null): string {
   const report = data.report;
 
-  // Resolve all four datasets using the same "treat empty as missing"
-  // rule as the UI, so the exported PDF/HTML mirrors what the user saw.
-  const g = data.interaction_graph;
-  const hasRealGraph = g && Array.isArray(g.nodes) && g.nodes.length > 0 && Array.isArray(g.edges) && g.edges.length > 0;
-  const resolvedGraph = hasRealGraph ? g! : getDemoInteractionGraph(request);
-
-  const t = data.temporal_model;
-  const hasRealTemporal = t && Array.isArray(t.daily_risk) && t.daily_risk.length > 0;
-  const resolvedTemporal = hasRealTemporal ? t! : getDemoTemporalModel(request, resolvedGraph);
-
-  const d = data.deprescribing_plan;
-  const hasRealPlan = d && Array.isArray(d.steps) && d.steps.length > 0;
-  // Real results never receive synthetic/demo deprescribing content: when
-  // the backend returned zero steps, the plan stays null and the export
-  // omits the section entirely.
-  const resolvedDep = hasRealPlan ? d! : null;
+  // Resolve all four datasets with the same STRICT real-only rule as the
+  // UI: empty backend sections resolve to null (never demo substitutes), so
+  // the exported PDF/HTML mirrors exactly what the user saw on screen.
+  const resolvedGraph = resolveRealGraph(data);
+  const resolvedTemporal = resolveRealTemporal(data);
+  const resolvedDep = resolveRealDeprescribing(data);
+  const exportedTotals = resolveInteractionTotals(data);
 
   const numScore = getNumericRiskScore(data, resolvedGraph, request);
   // Same rule as the on-screen report: derive label + color from the
@@ -534,9 +272,10 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
 
   // ── Section builders ──────────────────────────────────
 
-  // Interaction rows: prefer raw_interactions (richer) but fall back to
-  // graph.edges so the PDF is never empty when the demo data is used.
-  const rawIx = data.raw_interactions?.interactions ?? [];
+  // Interaction rows: prefer raw_interactions (richer); fall back to the
+  // real graph edges. When the response carries neither, the interaction
+  // section is omitted entirely (no demo data ever appears in the export).
+  const rawIx = snapshotInteractions(data);
 
   // Decide whether to show the Evidence and Confidence columns in the
   // exported table. If every row would be "—" (because the agent hasn't
@@ -563,7 +302,8 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
                <td>${ix.confidence_score != null ? ix.confidence_score + "%" : "—"}</td>`
             : ""}
         </tr>`).join("")
-    : resolvedGraph.edges.map((e) => `
+    : resolvedGraph
+      ? resolvedGraph.edges.map((e) => `
         <tr>
           <td>${esc(e.source)} + ${esc(e.target)}</td>
           <td><span class="sev sev-${e.severity}">${esc(e.severity.toUpperCase())}</span></td>
@@ -572,19 +312,25 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
             ? `<td>—</td>
                <td>${Math.round((e.weight ?? 0) * 100)}%</td>`
             : ""}
-        </tr>`).join("");
+        </tr>`).join("")
+      : "";
 
-  const totalInteractions = rawIx.length > 0 ? (data.raw_interactions?.total_interactions ?? rawIx.length) : resolvedGraph.edges.length;
-  const criticalCount = resolvedGraph.edges.filter((e) => e.severity === "critical").length;
-  const highCount = resolvedGraph.edges.filter((e) => e.severity === "high").length;
-  const hubDrugs = (resolvedGraph.hub_drugs ?? []);
-  const emergent = resolvedGraph.emergent_interactions ?? [];
+  const totalInteractions = exportedTotals.total;
+  const criticalCount = exportedTotals.critical ?? 0;
+  const highCount = exportedTotals.high ?? 0;
+  const hubDrugs = (resolvedGraph?.hub_drugs ?? []);
+  const emergent = (resolvedGraph?.emergent_interactions ?? []).length > 0
+    ? resolvedGraph!.emergent_interactions
+    : [];
+  const graphNodeCount = resolvedGraph?.nodes.length ?? 0;
 
-  // Timeline section
-  const peakScore = resolvedTemporal.peak_risk_score ?? 0;
-  const peakDay = resolvedTemporal.peak_risk_day ?? 0;
-  const windows = resolvedTemporal.intervention_windows ?? [];
-  const keyEvents = (resolvedTemporal.daily_risk ?? []).filter((d) => d.key_event);
+  // Timeline section — only from a real temporal model.
+  const peakScore = resolvedTemporal?.peak_risk_score ?? 0;
+  const peakDay = resolvedTemporal?.peak_risk_day ?? 0;
+  const windows = resolvedTemporal?.intervention_windows ?? [];
+  const keyEvents = resolvedTemporal
+    ? (resolvedTemporal.daily_risk ?? []).filter((d) => d.key_event)
+    : [];
 
   const windowRows = windows.map((w) => `
     <tr>
@@ -865,8 +611,14 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
     : ""}
 
   ${interactionRowsFinal ? `
-    <h2>Drug Interactions (${totalInteractions})</h2>
-    <p>${resolvedGraph.nodes.length} drugs · ${resolvedGraph.edges.length} pairwise interactions · Density ${((resolvedGraph.graph_density ?? 0) * 100).toFixed(0)}% · ${criticalCount} critical · ${highCount} high${hubDrugs.length > 0 ? ` · Hub drugs: <strong>${esc(hubDrugs.join(", "))}</strong>` : ""}</p>
+    <h2>Drug Interactions (${totalInteractions ?? 0})</h2>
+    <p>${[
+      graphNodeCount > 0 ? `${graphNodeCount} drugs` : "",
+      resolvedGraph ? `${resolvedGraph.edges.length} pairwise interactions · Density ${((resolvedGraph.graph_density ?? 0) * 100).toFixed(0)}%` : "",
+      criticalCount > 0 ? `${criticalCount} critical` : "",
+      highCount > 0 ? `${highCount} high` : "",
+      hubDrugs.length > 0 ? `Hub drugs: <strong>${esc(hubDrugs.join(", "))}</strong>` : "",
+    ].filter(Boolean).join(" · ")}</p>
     <table>
       <thead><tr><th>Drugs</th><th>Severity</th><th>Mechanism / Description</th>${showEvidenceCols ? "<th>Evidence</th><th>Confidence</th>" : ""}</tr></thead>
       <tbody>${interactionRowsFinal}</tbody>
@@ -877,23 +629,26 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
     ` : ""}
   ` : ""}
 
-  <h2>Risk Cascade Timeline</h2>
-  <p>${esc(resolvedTemporal.summary ?? "")}</p>
-  <p><strong>Projection:</strong> ${resolvedTemporal.timeline_days ?? 0} days &nbsp;·&nbsp;
-     <strong>Peak risk:</strong> <span style="color:#ea580c;font-weight:700">${peakScore.toFixed(1)}/10</span> at day ${peakDay}</p>
-  ${windowRows ? `
-    <h3>Intervention Windows</h3>
-    <table>
-      <thead><tr><th>Day Range</th><th>Action</th><th>Urgency</th></tr></thead>
-      <tbody>${windowRows}</tbody>
-    </table>
-  ` : ""}
-  ${keyEventRows ? `
-    <h3>Key Events</h3>
-    <table>
-      <thead><tr><th>Day</th><th>Event</th><th>Risk Score</th></tr></thead>
-      <tbody>${keyEventRows}</tbody>
-    </table>
+  ${resolvedTemporal ? `
+    <h2>Risk Cascade Timeline</h2>
+    <p>${esc(resolvedTemporal.summary ?? "")}</p>
+    <p><strong>Projection:</strong> ${resolvedTemporal.timeline_days ?? 0} model days &nbsp;·&nbsp;
+       <strong>Peak modeled risk:</strong> <span style="color:#ea580c;font-weight:700">${peakScore.toFixed(1)}/10</span> · model day ${peakDay}
+       <em style="color:#64748b;font-size:12px">&nbsp;(days are model units, not calendar dates)</em></p>
+    ${windowRows ? `
+      <h3>Intervention Windows</h3>
+      <table>
+        <thead><tr><th>Day Range</th><th>Action</th><th>Urgency</th></tr></thead>
+        <tbody>${windowRows}</tbody>
+      </table>
+    ` : ""}
+    ${keyEventRows ? `
+      <h3>Key Events</h3>
+      <table>
+        <thead><tr><th>Day</th><th>Event</th><th>Risk Score</th></tr></thead>
+        <tbody>${keyEventRows}</tbody>
+      </table>
+    ` : ""}
   ` : ""}
 
   ${resolvedDep && depRows ? `
@@ -942,11 +697,82 @@ function esc(s: unknown): string {
 
 // ── Interpretation Panels ───────────────────────────────
 
+// ── Graph selection helpers (side panels + priority links) ──
+function sevRankOf(s: string | undefined): number {
+  const map: Record<string, number> = { low: 1, moderate: 2, high: 3, critical: 4 };
+  return map[(s ?? "").toLowerCase()] ?? 0;
+}
+// Drug pairs are compared without order sensitivity so a priority item and
+// a graph edge always match regardless of which drug listed first.
+function sortedPair(a: string, b: string): [string, string] {
+  return a < b ? [a, b] : [b, a];
+}
+function edgeMatchesPair(
+  e: { source: string; target: string },
+  pair: [string, string],
+) {
+  const p = sortedPair(e.source, e.target);
+  const q = sortedPair(pair[0], pair[1]);
+  return p[0] === q[0] && p[1] === q[1];
+}
+function drugsMatchPair(drugs: string[] | undefined, pair: [string, string]) {
+  if (!Array.isArray(drugs) || drugs.length !== 2) return false;
+  return edgeMatchesPair({ source: drugs[0], target: drugs[1] }, pair);
+}
+// Build the same rich payload the 3D component emits for a node, so the
+// page can pin a node panel directly (e.g. from a priority/deprescribing
+// link) without needing to click the actual mesh.
+function buildGraphNodePayload(
+  graph: InteractionGraph | null,
+  name: string,
+): NodeClickPayload | null {
+  if (!graph) return null;
+  const node = graph.nodes?.find((n) => n.drug_name === name);
+  if (!node) return null;
+  const sevRank: Record<Severity, number> = { low: 1, moderate: 2, high: 3, critical: 4 };
+  const edges = graph.edges ?? [];
+  const connected: NodeClickPayload["connected"] = [];
+  let worst: Severity | null = null;
+  for (const e of edges) {
+    if (e.source === name || e.target === name) {
+      const other = e.source === name ? e.target : e.source;
+      connected.push({ drug: other, severity: e.severity, type: e.interaction_type });
+      if (!worst || sevRank[e.severity] > sevRank[worst]) worst = e.severity;
+    }
+  }
+  connected.sort((a, b) => sevRank[b.severity] - sevRank[a.severity]);
+  return {
+    drug_name: name,
+    is_hub: node.is_hub,
+    degree: node.degree ?? connected.length,
+    hub_score: node.hub_score ?? 0,
+    connected,
+    worst_severity: worst,
+  };
+}
+
 // ── Viz side panel helpers (shared by all 4 viz tabs) ────────
 //
 // Pattern: absolute-positioned panel anchored top-right of the canvas
 // wrapper, with subtle border + glow in the viz's accent color. Unified
 // here so all four tabs have identical chrome.
+
+/** Renders OVER the 3D canvas wrapper when the active tab's dataset was not
+ *  returned by the backend. Honest empty state — never synthesized data.
+ *  MUST live outside <Canvas>: inside Canvas this <div> would be parsed as a
+ *  THREE element and crash with "Div is not part of the THREE namespace!" */
+function VizEmptyState({ message }: { message: string }) {
+  return (
+    <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none">
+      <div
+        className="text-xs leading-relaxed text-center max-w-[260px] px-4 py-3 rounded-lg"
+        style={{ color: "#7a8ba8", background: "rgba(2,8,23,0.85)", border: "1px solid var(--border)" }}
+      >
+        {message}
+      </div>
+    </div>
+  );
+}
 
 function VizSidePanel({
   accentColor,
@@ -1247,7 +1073,15 @@ function Stat({ label, value, color }: { label: string; value: string | number; 
 }
 
 function GraphInterpretation({ graph }: { graph: InteractionGraph | null }) {
-  if (!graph) return null;
+  if (!graph) {
+    return (
+      <InterpretPanel title="Graph Interpretation">
+        <p className="text-xs leading-relaxed" style={{ color: "#7a8ba8" }}>
+          Interaction graph unavailable for this analysis.
+        </p>
+      </InterpretPanel>
+    );
+  }
   const edges = graph.edges ?? [];
   const nodes = graph.nodes ?? [];
   const hubs = graph.hub_drugs ?? [];
@@ -1363,7 +1197,15 @@ function GraphInterpretation({ graph }: { graph: InteractionGraph | null }) {
 }
 
 function TimelineInterpretation({ temporal }: { temporal: CascadeModel | null }) {
-  if (!temporal) return null;
+  if (!temporal) {
+    return (
+      <InterpretPanel title="Timeline Interpretation">
+        <p className="text-xs leading-relaxed" style={{ color: "#7a8ba8" }}>
+          No temporal cascade was returned for this analysis.
+        </p>
+      </InterpretPanel>
+    );
+  }
   const peakScore = temporal.peak_risk_score ?? 0;
   const peakColor =
     peakScore >= 8.5 ? "#ff0040" :
@@ -1740,21 +1582,35 @@ export default function ReportPage() {
   const [graphHover, setGraphHover] = useState<NodeClickPayload | null>(null);
   const [timelineHover, setTimelineHover] = useState<TimelineHoverPayload | null>(null);
   const [deprescribingClick, setDeprescribingClick] = useState<DeprescribingClickPayload | null>(null);
+  // Pinned node/edge selections (click-to-inspect). Hover still wins while
+  // nothing is pinned; once pinned, the panel sticks until dismissed.
+  const [graphNodeSel, setGraphNodeSel] = useState<NodeClickPayload | null>(null);
+  const [graphEdgeSel, setGraphEdgeSel] = useState<{ source: string; target: string } | null>(null);
 
   useEffect(() => {
-    try {
-      const stored = sessionStorage.getItem("rxnexus-result");
-      const storedReq = sessionStorage.getItem("rxnexus-request");
-      if (stored) setData(JSON.parse(stored));
-      if (storedReq) setRequest(JSON.parse(storedReq));
-    } catch { /* ignore */ }
+    // Read the single versioned analysis snapshot. `readSnapshot` also
+    // invalidates: a stale/malformed snapshot and the pre-fix legacy keys
+    // (`rxnexus-result` / `rxnexus-request`) are ignored and removed, so an
+    // old report can never silently survive into a new session.
+    const snap = readSnapshot(sessionStorage);
+    if (snap) {
+      setData(snap.result);
+      setRequest(snap.request);
+    } else {
+      setData(null);
+      setRequest(null);
+    }
   }, []);
 
   // Clear any sticky overlay state whenever the user switches tabs, so a
   // panel from one viz doesn't linger on another.
   useEffect(() => {
     if (activeViz !== "radar") setRadarHover(null);
-    if (activeViz !== "graph") setGraphHover(null);
+    if (activeViz !== "graph") {
+      setGraphHover(null);
+      setGraphNodeSel(null);
+      setGraphEdgeSel(null);
+    }
     if (activeViz !== "temporal") setTimelineHover(null);
     if (activeViz !== "waterfall") setDeprescribingClick(null);
   }, [activeViz]);
@@ -1773,33 +1629,45 @@ export default function ReportPage() {
     return () => mq.removeEventListener("change", update);
   }, []);
 
-  // Fallback rules: use the server-provided data ONLY when it has real
-  // content. A response like `{ nodes: [], edges: [] }` is treated as
-  // "empty" and the rich demo dataset is used instead, so the report
-  // never shows "No X data available" during a demo.
-  const effectiveGraph = useMemo((): InteractionGraph | null => {
-    const g = data?.interaction_graph;
-    const hasRealGraph = g && Array.isArray(g.nodes) && g.nodes.length > 0 && Array.isArray(g.edges) && g.edges.length > 0;
-    if (hasRealGraph) return g!;
-    return getDemoInteractionGraph(request);
-  }, [data, request]);
+  // STRICT single-source-of-truth: every visualization renders ONLY data
+  // that actually came back from the analyze backend for the active
+  // snapshot. Empty backend sections resolve to null (never demo
+  // substitutes), and unavailable sections surface an honest "no data"
+  // state instead of fabricated content.
+  const effectiveGraph = useMemo((): InteractionGraph | null => resolveRealGraph(data), [data]);
 
-  const effectiveTemporal = useMemo((): CascadeModel | null => {
-    const t = data?.temporal_model;
-    const hasRealTemporal = t && Array.isArray(t.daily_risk) && t.daily_risk.length > 0;
-    if (hasRealTemporal) return t!;
-    return getDemoTemporalModel(request, effectiveGraph);
-  }, [data, request, effectiveGraph]);
+  const effectiveTemporal = useMemo((): CascadeModel | null => resolveRealTemporal(data), [data]);
 
   const effectiveDeprescribing = useMemo((): DeprescribingPlan | null => {
     // REAL results only: when the backend returned zero deprescribing
     // steps, the plan is null — never substituted with synthetic/demo
     // recommendations. Absence of steps means "none returned", which the
     // UI surfaces neutrally rather than as a promise of safety.
-    const d = data?.deprescribing_plan;
-    const hasRealPlan = d && Array.isArray(d.steps) && d.steps.length > 0;
-    return hasRealPlan ? d! : null;
+    return resolveRealDeprescribing(data);
   }, [data]);
+
+  // Re-baseline the active viz + clear sticky selections whenever the
+  // availability of a visualization changes. The active tab can never be
+  // one whose data is missing (dead tabs are disabled in the UI), so when a
+  // section is unavailable we fall back to the first available tab — never
+  // to a synthetic dataset.
+  useEffect(() => {
+    // Re-baseline the active viz whenever availability changes: the active
+    // tab can never be one whose data is missing. Phenotype (radar) is
+    // always available, so there is ALWAYS a valid target — this guarantees
+    // the canvas never sits on a data-less tab.
+    const available = ([
+      { key: "graph", available: !!effectiveGraph },
+      { key: "temporal", available: !!effectiveTemporal },
+      { key: "radar", available: true },
+      { key: "waterfall", available: !!effectiveDeprescribing },
+    ] as const)
+      .filter((t) => t.available)
+      .map((t) => t.key);
+    if (!(available as readonly string[]).includes(activeViz)) {
+      setActiveViz(available[0]);
+    }
+  }, [activeViz, effectiveGraph, effectiveTemporal, effectiveDeprescribing]);
 
   const handleExportPDF = useCallback(() => {
     if (!data) return;
@@ -1870,17 +1738,12 @@ export default function ReportPage() {
   // rest of the page said "7". Use the same priority as the HTML export:
   // raw_interactions.total_interactions → raw_interactions.interactions
   // length → effectiveGraph.edges length.
-  const totalInteractions = (() => {
-    const rawList = data.raw_interactions?.interactions ?? [];
-    if (rawList.length > 0) {
-      return data.raw_interactions?.total_interactions ?? rawList.length;
-    }
-    return (effectiveGraph?.edges ?? []).length;
-  })();
+  const totalInteractions = resolveInteractionTotals(data).total;
+  const summaryTotals = resolveInteractionTotals(data);
 
   const vizTabs = [
     { key: "graph" as const, label: "Interaction Graph", icon: "🕸️", available: !!effectiveGraph },
-    { key: "temporal" as const, label: "Timeline", icon: "⏱️", available: !!effectiveTemporal },
+    { key: "temporal" as const, label: "Risk Cascade", icon: "⏱️", available: !!effectiveTemporal },
     { key: "radar" as const, label: "Phenotype", icon: "👤", available: true },
     { key: "waterfall" as const, label: "Deprescribing", icon: "💊", available: !!effectiveDeprescribing },
   ];
@@ -1906,6 +1769,9 @@ export default function ReportPage() {
   // nothing here invents a metric the backend does not expose.
   const hubName = effectiveGraph?.hub_drugs?.[0];
   const hubNode = effectiveGraph?.nodes?.find((n) => n.drug_name === hubName);
+  // The pinned node panel wins over hover once the user clicks a node; hover
+  // keeps the transient feel until something is intentionally selected.
+  const activeGraphNode = graphNodeSel ?? graphHover;
   const renalAssessment = data.report?.renal_assessment;
   const renalSummary = renalAssessment
     ? {
@@ -1945,6 +1811,7 @@ export default function ReportPage() {
           ix.description ||
           ix.mechanism ||
           "Potential interaction flagged for clinical review.",
+        drugs: ix.drugs ?? [],
         actionLabel:
           ix.evidence_grade || ix.confidence_score != null
             ? "Evidence-graded interaction"
@@ -1969,6 +1836,7 @@ export default function ReportPage() {
           badge: `Priority ${step.priority}`,
           badgeColor: "#a78bfa",
           description: step.rationale || "Review flagged for clinical assessment.",
+          drugs: [step.drug],
           actionLabel: getActionLabel(step.action),
           evidence:
             typeof step.expected_risk_reduction === "number"
@@ -1981,6 +1849,31 @@ export default function ReportPage() {
     return items;
   };
   const priorityItems = buildPriorityItems();
+
+  // Phase 7: clicking a review-priority item jumps to the graph and pins the
+  // matching edge (interaction pairs) or node (single drug / deprescribing
+  // step). Falls back silently when the drug isn't present in the graph.
+  const selectPriority = (drugs: string[]) => {
+    setActiveViz("graph");
+    if (drugs.length >= 2) {
+      const pair: [string, string] = [drugs[0], drugs[1]];
+      const edge = (effectiveGraph?.edges ?? []).find((e) => edgeMatchesPair(e, pair));
+      if (edge) {
+        setGraphEdgeSel({ source: edge.source, target: edge.target });
+        setGraphNodeSel(null);
+        requestAnimationFrame(() => {
+          document.getElementById("viz-anchor")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        });
+        return;
+      }
+    }
+    const name = drugs[0];
+    setGraphEdgeSel(null);
+    setGraphNodeSel(buildGraphNodePayload(effectiveGraph, name));
+    requestAnimationFrame(() => {
+      document.getElementById("viz-anchor")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  };
 
   // Patient / Regimen Summary card — hoisted into a variable so it can be
   // rendered as the FIRST report section (before Clinical Overview → Review
@@ -2060,10 +1953,10 @@ export default function ReportPage() {
           )}
           <div className="grid grid-cols-2 gap-1.5 text-[10px]">
             {[
-              { label: "Interactions", value: totalInteractions, bg: "rgba(6,182,212,0.06)", border: "rgba(6,182,212,0.15)", color: "#eaf0fa", hoverBg: "rgba(6,182,212,0.12)" },
-              { label: "Risk", value: `${numScore.toFixed(1)}/10`, bg: riskInfo.bgColor, border: `${riskInfo.color}22`, color: riskInfo.color, hoverBg: `${riskInfo.color}18` },
-              { label: "Critical", value: (effectiveGraph?.edges ?? []).filter(e => e.severity === "critical").length, bg: "rgba(255,0,64,0.06)", border: "rgba(255,0,64,0.18)", color: "#ff0040", hoverBg: "rgba(255,0,64,0.14)" },
-              { label: "Deprescribe", value: `${(effectiveDeprescribing?.steps ?? []).length} steps`, bg: "rgba(16,185,129,0.06)", border: "rgba(16,185,129,0.15)", color: "#10b981", hoverBg: "rgba(16,185,129,0.12)" },
+              { label: "Interactions", value: totalInteractions ?? "—", bg: "rgba(6,182,212,0.06)", border: "rgba(6,182,212,0.15)", color: "#eaf0fa", hoverBg: "rgba(6,182,212,0.12)" },
+              { label: "Regimen Risk", value: `${numScore.toFixed(1)}/10`, bg: riskInfo.bgColor, border: `${riskInfo.color}22`, color: riskInfo.color, hoverBg: `${riskInfo.color}18` },
+              { label: "Critical interactions", value: summaryTotals.critical ?? "—", bg: "rgba(255,0,64,0.06)", border: "rgba(255,0,64,0.18)", color: "#ff0040", hoverBg: "rgba(255,0,64,0.14)" },
+              { label: "Deprescribing", value: effectiveDeprescribing ? `${(effectiveDeprescribing.steps ?? []).length} steps` : "—", bg: "rgba(16,185,129,0.06)", border: "rgba(16,185,129,0.15)", color: "#10b981", hoverBg: "rgba(16,185,129,0.12)" },
             ].map((stat, i) => (
               <div key={i} className="px-2 py-1 rounded"
                 style={{
@@ -2163,11 +2056,15 @@ export default function ReportPage() {
           score={numScore}
           riskInfo={riskInfo}
           medications={medCount}
-          interactions={{
-            count: totalInteractions,
-            critical: criticalCount,
-            high: highCount,
-          }}
+          interactions={
+            totalInteractions !== undefined
+              ? {
+                  count: totalInteractions,
+                  critical: summaryTotals.critical ?? 0,
+                  high: summaryTotals.high ?? 0,
+                }
+              : undefined
+          }
           hub={
             hubName && effectiveGraph
               ? {
@@ -2182,7 +2079,10 @@ export default function ReportPage() {
           burden={data.report?.burden_scores}
         />
 
-        <ClinicalReviewPriorities items={priorityItems} />
+        <ClinicalReviewPriorities
+          items={priorityItems}
+          onSelectInteraction={selectPriority}
+        />
 
         {/* ── Main grid: stack on mobile, side-by-side on desktop ──
             On desktop the left column (3D viz + interpretation panel) is
@@ -2199,6 +2099,105 @@ export default function ReportPage() {
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
           {/* Left — 3D */}
           <div className="lg:col-span-3 space-y-4 lg:sticky lg:top-4 lg:self-start">
+            {/* Graph header: context + stats + legend so the 3D scene reads
+                at a glance. Honest counts only — every number below comes
+                from the returned graph or severity split, never inferred. */}
+            {activeViz === "graph" && effectiveGraph && (
+              <div
+                className="rounded-xl p-3.5"
+                style={{ background: "rgba(8,20,37,0.6)", border: "1px solid var(--border)" }}
+              >
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <h3 className="font-display font-semibold text-sm flex items-center gap-2 flex-wrap" style={{ color: "var(--text)" }}>
+                      Interaction Graph
+                      {(graphEdgeSel || graphNodeSel) && (
+                        <span
+                          className="font-mono text-[9px] uppercase tracking-wider px-2 py-0.5 rounded"
+                          style={{
+                            color: "#06b6d4",
+                            background: "rgba(0,229,255,0.08)",
+                            border: "1px solid rgba(0,229,255,0.2)",
+                          }}
+                        >
+                          ↦ linked from review priorities
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-[11px] mt-0.5" style={{ color: "#7a8ba8" }}>
+                      Medication interaction network. <span style={{ color: "#a78bfa" }}>★</span> marks a
+                      hub — a drug connected to multiple others. Line color = severity.
+                    </p>
+                  </div>
+                  <span
+                    className="font-mono text-[10px] px-2 py-1 rounded shrink-0"
+                    style={{ color: "#7a8ba8", background: "rgba(2,8,23,0.5)", border: "1px solid rgba(0,229,255,0.1)" }}
+                  >
+                    Drag to rotate · Scroll to zoom
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  <MiniStat label="Medications" value={effectiveGraph.nodes?.length ?? 0} accent="#06b6d4" />
+                  <MiniStat label="Interactions" value={effectiveGraph.edges?.length ?? 0} accent="#06b6d4" />
+                  <MiniStat label="Critical interactions" value={summaryTotals.critical ?? 0} accent={(summaryTotals.critical ?? 0) > 0 ? "#ff0040" : undefined} />
+                  <MiniStat label="High interactions" value={summaryTotals.high ?? 0} accent={(summaryTotals.high ?? 0) > 0 ? "#f97316" : undefined} />
+                  {hubName && <MiniStat label="Primary Hub" value={hubName} accent="#a78bfa" />}
+                </div>
+
+                {/* Legend */}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-3 text-[10px]" style={{ color: "#7a8ba8" }}>
+                  <span className="uppercase tracking-wider font-mono">Legend</span>
+                  {(["low", "moderate", "high", "critical"] as const).map((s) => (
+                    <span key={s} className="flex items-center gap-1 capitalize">
+                      <span
+                        className="w-2 h-0.5 rounded"
+                        style={{ background: SEVERITY_COLORS[s], boxShadow: `0 0 6px ${SEVERITY_COLORS[s]}80` }}
+                      />
+                      {s}
+                    </span>
+                  ))}
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full" style={{ background: "#0ea5e9", boxShadow: "0 0 6px #0ea5e966" }} />
+                    medication
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span style={{ color: "#a78bfa" }}>★</span> hub
+                  </span>
+                  <span className="w-full sm:w-auto text-[10px]" style={{ color: "#5b6f8a" }}>
+                    Select a medication or interaction to inspect details.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Risk Cascade header: honest framing that days are model units,
+                not calendar dates — matching the backend's cascade semantics. */}
+            {activeViz === "temporal" && effectiveTemporal && (
+              <div
+                className="rounded-xl p-3.5"
+                style={{ background: "rgba(8,20,37,0.6)", border: "1px solid var(--border)" }}
+              >
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <h3 className="font-display font-semibold text-sm" style={{ color: "var(--text)" }}>
+                      Risk Cascade
+                    </h3>
+                    <p className="text-[11px] mt-0.5" style={{ color: "#7a8ba8" }}>
+                      Model projection of daily interaction risk over {effectiveTemporal.timeline_days ?? "—"} days.
+                      Days are model units, not calendar dates.
+                    </p>
+                  </div>
+                  <span
+                    className="font-mono text-[10px] px-2 py-1 rounded shrink-0"
+                    style={{ color: "#7a8ba8", background: "rgba(2,8,23,0.5)", border: "1px solid rgba(0,229,255,0.1)" }}
+                  >
+                    Drag to rotate · Hover to inspect
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Viz tabs with hover animation */}
             <div className="flex gap-1 p-1 rounded-xl overflow-x-auto" style={{ background: "rgba(8,20,37,0.6)", border: "1px solid var(--border)" }}>
               {vizTabs.map((tab) => (
@@ -2230,13 +2229,31 @@ export default function ReportPage() {
             </div>
 
             <motion.div key={activeViz} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}
+              id="viz-anchor"
               className="rounded-xl overflow-hidden transition-all duration-300 relative"
               style={{ height: canvasHeight, background: "rgba(8,20,37,0.4)", border: "1px solid var(--border)" }}>
               <Scene camera={{ position: [0, 0, 8], fov: 50 }}>
-                {activeViz === "graph" && (
-                  <InteractionGraph3D data={effectiveGraph as any} onNodeHover={setGraphHover} />
+                {/* R3F scene trees contain THREE elements ONLY. Missing-data
+                    states are surfaced as an HTML overlay OUTSIDE <Canvas>;
+                    never HTML inside the canvas. */}
+                {activeViz === "graph" && effectiveGraph && (
+                  <InteractionGraph3D
+                    data={effectiveGraph as any}
+                    onNodeHover={setGraphHover}
+                    onNodeClick={(p) => {
+                      if (p) {
+                        setGraphNodeSel(p);
+                        setGraphEdgeSel(null);
+                      }
+                    }}
+                    onEdgeClick={(source, target) => {
+                      setGraphNodeSel(null);
+                      setGraphEdgeSel({ source, target });
+                    }}
+                    selectedEdge={graphEdgeSel}
+                  />
                 )}
-                {activeViz === "temporal" && (
+                {activeViz === "temporal" && effectiveTemporal && (
                   <TemporalTimeline3D data={effectiveTemporal as any} onPointHover={setTimelineHover} />
                 )}
                 {activeViz === "radar" && (
@@ -2245,10 +2262,23 @@ export default function ReportPage() {
                     onHoverAxis={setRadarHover}
                   />
                 )}
-                {activeViz === "waterfall" && (
+                {activeViz === "waterfall" && effectiveDeprescribing && (
                   <DeprescribingWaterfall data={effectiveDeprescribing as any} onStepClick={setDeprescribingClick} />
                 )}
               </Scene>
+
+              {/* HTML empty-state overlays, kept OUTSIDE the R3F canvas: a
+                  <div> inside <Canvas> is parsed as a THREE element and
+                  throws "Div is not part of the THREE namespace!". */}
+              {activeViz === "graph" && !effectiveGraph && (
+                <VizEmptyState message="No interaction graph was returned for this analysis." />
+              )}
+              {activeViz === "temporal" && !effectiveTemporal && (
+                <VizEmptyState message="No risk cascade was returned for this analysis." />
+              )}
+              {activeViz === "waterfall" && !effectiveDeprescribing && (
+                <VizEmptyState message="No deprescribing plan was returned for this analysis." />
+              )}
 
               {/* HTML overlay side-panels, rendered OUTSIDE the 3D canvas so
                   they never get clipped. Each viz has its own panel,
@@ -2276,30 +2306,66 @@ export default function ReportPage() {
                 </VizSidePanel>
               )}
 
-              {activeViz === "graph" && graphHover && (
+              {activeViz === "graph" && activeGraphNode && (
                 <VizSidePanel
-                  accentColor={graphHover.worst_severity ? SEVERITY_COLORS[graphHover.worst_severity] : "#06b6d4"}
+                  accentColor={activeGraphNode.worst_severity ? SEVERITY_COLORS[activeGraphNode.worst_severity] : "#06b6d4"}
+                  onClose={() => { setGraphNodeSel(null); setGraphEdgeSel(null); }}
                 >
                   <SidePanelHeader
-                    title={graphHover.drug_name}
-                    badge={graphHover.is_hub ? "★ HUB" : undefined}
-                    accent={graphHover.is_hub ? "#a78bfa" : "#06b6d4"}
+                    title={activeGraphNode.drug_name}
+                    badge={activeGraphNode.is_hub ? "★ HUB" : undefined}
+                    accent={activeGraphNode.is_hub ? "#a78bfa" : "#06b6d4"}
                   />
                   <div className="grid grid-cols-2 gap-1.5 mb-2.5">
-                    <MiniStat label="Connections" value={graphHover.degree} accent="#06b6d4" />
+                    <MiniStat label="Connections" value={activeGraphNode.degree} accent="#06b6d4" />
                     <MiniStat
                       label="Hub Score"
-                      value={`${(graphHover.hub_score * 100).toFixed(0)}%`}
-                      accent={graphHover.is_hub ? "#a78bfa" : undefined}
+                      value={`${(activeGraphNode.hub_score * 100).toFixed(0)}%`}
+                      accent={activeGraphNode.is_hub ? "#a78bfa" : undefined}
                     />
                   </div>
-                  {graphHover.connected.length > 0 && (
+                  {/* Worst-severity finding for this drug, once only */}
+                  {(rawInteractionList.length > 0 || (effectiveGraph?.edges ?? []).length > 0) && (
+                    <p className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: "#7a8ba8" }}>
+                      Highest-risk interaction
+                    </p>
+                  )}
+                  {(() => {
+                    const name = activeGraphNode.drug_name;
+                    const ranked = [...(rawInteractionList ?? [])]
+                      .filter((ix) => (ix.drugs ?? []).includes(name))
+                      .sort((a, b) => (sevRankOf(b.severity) - sevRankOf(a.severity)));
+                    const found = ranked[0];
+                    if (!found) return null;
+                    const fc = SEVERITY_COLORS[(found.severity ?? "").toLowerCase()] ?? "#94a8c8";
+                    return (
+                      <div className="mb-2">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="text-[11px] truncate" style={{ color: "#eaf0fa" }}>
+                            {(found.drugs ?? []).filter((d) => d !== name).join(" + ") || "related drug"}
+                          </span>
+                          <span
+                            className="text-[9px] uppercase tracking-wider font-mono font-bold px-1.5 py-0.5 rounded shrink-0"
+                            style={{ color: fc, background: `${fc}22`, border: `1px solid ${fc}44` }}
+                          >
+                            {found.severity}
+                          </span>
+                        </div>
+                        {found.description && (
+                          <p className="text-[11px] leading-relaxed mt-1" style={{ color: "#a3b8d0" }}>
+                            {found.description}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {activeGraphNode.connected.length > 0 && (
                     <>
                       <p className="text-[10px] uppercase tracking-wider font-mono mb-1.5" style={{ color: "#7a8ba8" }}>
                         Interacts with:
                       </p>
                       <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
-                        {graphHover.connected.map((c, i) => {
+                        {activeGraphNode.connected.map((c, i) => {
                           const sc = SEVERITY_COLORS[c.severity] ?? "#94a8c8";
                           return (
                             <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
@@ -2318,6 +2384,50 @@ export default function ReportPage() {
                   )}
                 </VizSidePanel>
               )}
+
+              {/* Selected edge panel — a full finding for the clicked/linked
+                  pair: type/mechanism, description, clinical significance and
+                  any evidence metadata, or an explicit absence note. */}
+              {activeViz === "graph" && graphEdgeSel && (() => {
+                const pair: [string, string] = [graphEdgeSel.source, graphEdgeSel.target];
+                const edge = (effectiveGraph?.edges ?? []).find((e) => edgeMatchesPair(e, pair));
+                const ix = rawInteractionList.find((r) => drugsMatchPair(r.drugs, pair));
+                const sevKey = (edge?.severity ?? ix?.severity ?? "moderate").toLowerCase();
+                const accent = SEVERITY_COLORS[sevKey] ?? "#06b6d4";
+                return (
+                  <VizSidePanel accentColor={accent} onClose={() => setGraphEdgeSel(null)}>
+                    <SidePanelHeader
+                      title={`${graphEdgeSel.source} ↔ ${graphEdgeSel.target}`}
+                      badge={(edge?.severity ?? ix?.severity ?? "").toUpperCase() || "INTERACTION"}
+                      accent={accent}
+                    />
+                    <div className="mb-2">
+                      <MiniStat
+                        label="Type / Mechanism"
+                        value={edge?.interaction_type ?? ix?.interaction_type ?? "Not specified"}
+                        accent="#06b6d4"
+                      />
+                    </div>
+                    {ix?.description && (
+                      <p className="text-[11px] leading-relaxed mb-2" style={{ color: "#cbd5e1" }}>
+                        {ix.description}
+                      </p>
+                    )}
+                    {ix?.clinical_significance && (
+                      <p className="text-[11px] leading-relaxed mb-2" style={{ color: "#a3b8d0" }}>
+                        <span style={{ color: "#eaf0fa" }}>Clinical significance: </span>
+                        {ix.clinical_significance}
+                      </p>
+                    )}
+                    <p className="text-[10px] font-mono mb-2" style={{ color: "#5b6f8a" }}>
+                      {edge
+                        ? `Edge weight ${edge.weight != null ? edge.weight.toFixed(2) : "—"} · graph edge`
+                        : "Finding from the interaction list (no graph edge for this exact pair)."}
+                    </p>
+                    <EvidenceSummary interaction={ix ?? null} mechanism={ix?.mechanism} />
+                  </VizSidePanel>
+                );
+              })()}
 
               {activeViz === "temporal" && timelineHover && (
                 <VizSidePanel
@@ -2578,13 +2688,15 @@ function buildPatientSummary(
     bullets.push({ label: "Medications on record", value: String(medCount) });
   }
 
-  const edges = graph?.edges ?? [];
-  const crit = edges.filter((e) => e.severity === "critical").length;
-  const high = edges.filter((e) => e.severity === "high").length;
-  if (edges.length > 0) {
-    bullets.push({ label: "Interactions identified", value: String(edges.length), color: "#06b6d4" });
-    if (crit > 0) bullets.push({ label: "Critical severity", value: String(crit), color: "#ff0040" });
-    if (high > 0) bullets.push({ label: "High severity", value: String(high), color: "#f97316" });
+  const totals = resolveInteractionTotals(data);
+  if (totals.total !== undefined) {
+    bullets.push({ label: "Interactions identified", value: String(totals.total), color: "#06b6d4" });
+  }
+  if (totals.critical) {
+    bullets.push({ label: "Critical interactions", value: String(totals.critical), color: "#ff0040" });
+  }
+  if (totals.high) {
+    bullets.push({ label: "High interactions", value: String(totals.high), color: "#f97316" });
   }
 
   if (temporal && (temporal.peak_risk_score ?? 0) > 0) {
@@ -2593,8 +2705,8 @@ function buildPatientSummary(
       temporal.peak_risk_score >= 5.0 ? "#f97316" :
       temporal.peak_risk_score >= 2.0 ? "#f59e0b" : "#06b6d4";
     bullets.push({
-      label: "Peak risk",
-      value: `${temporal.peak_risk_score.toFixed(1)}/10 at day ${temporal.peak_risk_day}`,
+      label: "Peak modeled risk",
+      value: `${temporal.peak_risk_score.toFixed(1)}/10 · model day ${temporal.peak_risk_day}`,
       color: peakColor,
     });
   }

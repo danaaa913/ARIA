@@ -29,7 +29,13 @@ interface InteractionGraph3DProps {
   /** Called when the user hovers over a node. Emits rich payload for the
    *  parent's side panel. Null when no node is hovered. */
   onNodeHover?: (payload: NodeClickPayload | null) => void;
+  /** Called when the user clicks/taps a node so the parent can PIN the
+   *  selection (persistent panel with a close affordance), not just hover. */
+  onNodeClick?: (payload: NodeClickPayload | null) => void;
   onEdgeClick?: (source: string, target: string) => void;
+  /** Externally-highlighted edge (e.g. linked from a priority item).
+   *  Rendered with a thick bright line so the user can relocate it. */
+  selectedEdge?: { source: string; target: string } | null;
 }
 
 interface NodePosition {
@@ -44,7 +50,9 @@ interface NodePosition {
 export function InteractionGraph3D({
   data,
   onNodeHover,
+  onNodeClick,
   onEdgeClick,
+  selectedEdge,
 }: InteractionGraph3DProps) {
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   // On touch devices, hover via onPointerOver fires only momentarily during a
@@ -202,6 +210,31 @@ export function InteractionGraph3D({
     }
   });
 
+  // Build the rich payload the parent's side panel renders for a node.
+  const buildNodePayload = (name: string): NodeClickPayload | null => {
+    const node = nodes.find((n) => n.drug_name === name);
+    if (!node) return null;
+    const sevRank: Record<Severity, number> = { low: 1, moderate: 2, high: 3, critical: 4 };
+    const connected: NodeClickPayload["connected"] = [];
+    let worst: Severity | null = null;
+    for (const e of edges) {
+      if (e.source === name || e.target === name) {
+        const other = e.source === name ? e.target : e.source;
+        connected.push({ drug: other, severity: e.severity, type: e.interaction_type });
+        if (!worst || sevRank[e.severity] > sevRank[worst]) worst = e.severity;
+      }
+    }
+    connected.sort((a, b) => sevRank[b.severity] - sevRank[a.severity]);
+    return {
+      drug_name: name,
+      is_hub: node.is_hub,
+      degree: node.degree ?? connected.length,
+      hub_score: node.hub_score ?? 0,
+      connected,
+      worst_severity: worst,
+    };
+  };
+
   // Emit payload whenever the active node changes (locked on touch, hovered
   // on mouse). The parent's side panel renders the rich details.
   useEffect(() => {
@@ -210,26 +243,8 @@ export function InteractionGraph3D({
       onNodeHover(null);
       return;
     }
-    const node = nodes.find((n) => n.drug_name === activeNode);
-    const sevRank: Record<Severity, number> = { low: 1, moderate: 2, high: 3, critical: 4 };
-    const connected: NodeClickPayload["connected"] = [];
-    let worst: Severity | null = null;
-    for (const e of edges) {
-      if (e.source === activeNode || e.target === activeNode) {
-        const other = e.source === activeNode ? e.target : e.source;
-        connected.push({ drug: other, severity: e.severity, type: e.interaction_type });
-        if (!worst || sevRank[e.severity] > sevRank[worst]) worst = e.severity;
-      }
-    }
-    connected.sort((a, b) => sevRank[b.severity] - sevRank[a.severity]);
-    onNodeHover({
-      drug_name: activeNode,
-      is_hub: node?.is_hub ?? false,
-      degree: node?.degree ?? connected.length,
-      hub_score: node?.hub_score ?? 0,
-      connected,
-      worst_severity: worst,
-    });
+    const payload = buildNodePayload(activeNode);
+    if (payload) onNodeHover(payload);
   }, [activeNode, nodes, edges, onNodeHover]);
 
   if (nodes.length === 0) {
@@ -267,8 +282,12 @@ export function InteractionGraph3D({
           const color = SEVERITY_COLORS[edge.severity] || "#1e3a5f";
           const lineWidth = 1 + (edge.weight || 0) * 2;
           const isHighlighted = activeNode === edge.source || activeNode === edge.target;
+          const isSelected =
+            !!selectedEdge &&
+            ((selectedEdge.source === edge.source && selectedEdge.target === edge.target) ||
+              (selectedEdge.source === edge.target && selectedEdge.target === edge.source));
           return (
-            <EdgeLine key={`e-${i}`} a={a} b={b} color={color} lineWidth={lineWidth} highlighted={isHighlighted}
+            <EdgeLine key={`e-${i}`} a={a} b={b} color={color} lineWidth={lineWidth} highlighted={isHighlighted} isSelected={isSelected}
               onClick={() => onEdgeClick?.(edge.source, edge.target)} />
           );
         })}
@@ -285,10 +304,24 @@ export function InteractionGraph3D({
             isTouchDevice={isTouchDevice}
             isLocked={lockedNode === node.drug_name}
             onHover={setHoveredNode}
+            onClickNode={(name) => {
+              // Mouse devices: clicking a node pins it for a persistent
+              // details panel (parent keeps the selection). Touch keeps the
+              // existing tap-to-lock behavior and still opens the panel via
+              // the lock-driven hover emission.
+              if (!isTouchDevice && onNodeClick) {
+                const payload = buildNodePayload(name);
+                onNodeClick(payload ? { ...payload, drug_name: name } : null);
+              }
+            }}
             onTap={(name) => {
               // Toggle lock: tapping the same node again unlocks it; tapping
               // a different node moves the lock there.
               setLockedNode((curr) => (curr === name ? null : name));
+              if (onNodeClick) {
+                const payload = buildNodePayload(name);
+                onNodeClick(payload);
+              }
             }} />
         ))}
       </group>
@@ -320,11 +353,12 @@ function EmptyGraph() {
   );
 }
 
-function DrugNode({ node, isHovered, isTouchDevice, isLocked, onHover, onTap }: {
+function DrugNode({ node, isHovered, isTouchDevice, isLocked, onHover, onClickNode, onTap }: {
   node: NodePosition; isHovered: boolean;
   isTouchDevice: boolean;
   isLocked: boolean;
   onHover: (name: string | null) => void;
+  onClickNode: (name: string) => void;
   onTap: (name: string) => void;
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
@@ -370,7 +404,7 @@ function DrugNode({ node, isHovered, isTouchDevice, isLocked, onHover, onTap }: 
           : () => onHover(null)}
         onPointerDown={isTouchDevice
           ? (e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); onTap(node.drug_name); }
-          : undefined}>
+          : (e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); onClickNode(node.drug_name); }}>
         <sphereGeometry args={[size, 32, 32]} />
         <meshStandardMaterial color={color} emissive={color}
           emissiveIntensity={isHovered ? 0.9 : 0.4}
@@ -393,11 +427,12 @@ function DrugNode({ node, isHovered, isTouchDevice, isLocked, onHover, onTap }: 
   );
 }
 
-function EdgeLine({ a, b, color, lineWidth, highlighted, onClick }: {
+function EdgeLine({ a, b, color, lineWidth, highlighted, isSelected, onClick }: {
   a: NodePosition; b: NodePosition; color: string; lineWidth: number;
-  highlighted: boolean; onClick: () => void;
+  highlighted: boolean; isSelected: boolean; onClick: () => void;
 }) {
   // Use current positions directly — re-renders driven by parent forceUpdate
+  const active = highlighted || isSelected;
   return (
     <Line
       points={[
@@ -405,9 +440,9 @@ function EdgeLine({ a, b, color, lineWidth, highlighted, onClick }: {
         [b.pos.x, b.pos.y, b.pos.z],
       ]}
       color={color}
-      lineWidth={highlighted ? lineWidth * 1.5 : lineWidth}
+      lineWidth={active ? lineWidth * 1.8 : lineWidth}
       transparent
-      opacity={highlighted ? 0.9 : 0.6}
+      opacity={active ? 0.95 : 0.6}
       onClick={onClick}
     />
   );

@@ -28,7 +28,7 @@ interface ClinicalOverviewProps {
   /** Resolved medication count; `undefined` when no backend source exists —
    *  the card must then omit the count rather than show a fabricated 0. */
   medications?: number;
-  interactions: { count: number; critical: number; high: number };
+  interactions?: { count: number; critical: number; high: number };
   hub?: { drug: string; degree: number; hubScore: number; isHub: boolean };
   renal?: { flagged: number; egfrRange?: string; ckdStage?: number };
   burden?: BurdenScores;
@@ -84,6 +84,7 @@ export function ClinicalOverview({
   burden,
 }: ClinicalOverviewProps) {
   const numScore = Number.isFinite(score) ? score : 0;
+  const ix = interactions;
 
   return (
     <section className="mb-6">
@@ -135,19 +136,25 @@ export function ClinicalOverview({
                 </span>
               </div>
               <div className="text-xs leading-relaxed" style={{ color: "#a3b8d0" }}>
-                {interactions.count} interaction{interactions.count === 1 ? "" : "s"} detected
-                {interactions.critical + interactions.high > 0 && (
-                  <span className="mt-1 block">
-                    {interactions.critical > 0 && (
-                      <LevelChip label={`${interactions.critical} critical`} color="#ff0040" />
+                {ix ? (
+                  <>
+                    {ix.count} interaction{ix.count === 1 ? "" : "s"} detected
+                    {ix.critical + ix.high > 0 && (
+                      <span className="mt-1 block">
+                        {ix.critical > 0 && (
+                          <LevelChip label={`${ix.critical} critical`} color="#ff0040" />
+                        )}
+                        {ix.high > 0 && (
+                          <>
+                            {" "}
+                            <LevelChip label={`${ix.high} high`} color="#f97316" />
+                          </>
+                        )}
+                      </span>
                     )}
-                    {interactions.high > 0 && (
-                      <>
-                        {" "}
-                        <LevelChip label={`${interactions.high} high`} color="#f97316" />
-                      </>
-                    )}
-                  </span>
+                  </>
+                ) : (
+                  "No interaction data returned — the interaction analysis component did not produce output."
                 )}
               </div>
             </>
@@ -155,25 +162,29 @@ export function ClinicalOverview({
             <>
               <div className="flex items-baseline gap-2">
                 <span className="font-display font-bold text-3xl leading-none" style={{ color: "var(--text)" }}>
-                  {interactions.count}
+                  {ix ? ix.count : "—"}
                 </span>
-                <span className="text-xs" style={{ color: "#7a8ba8" }}>
-                  interaction{interactions.count === 1 ? "" : "s"}
-                </span>
+                {ix && (
+                  <span className="text-xs" style={{ color: "#7a8ba8" }}>
+                    interaction{ix.count === 1 ? "" : "s"}
+                  </span>
+                )}
               </div>
               <div className="text-xs leading-relaxed" style={{ color: "#a3b8d0" }}>
-                {interactions.critical + interactions.high > 0 ? (
+                {ix && ix.critical + ix.high > 0 ? (
                   <span className="mt-1 block">
-                    {interactions.critical > 0 && <LevelChip label={`${interactions.critical} critical`} color="#ff0040" />}
-                    {interactions.high > 0 && (
+                    {ix.critical > 0 && <LevelChip label={`${ix.critical} critical`} color="#ff0040" />}
+                    {ix.high > 0 && (
                       <>
                         {" "}
-                        <LevelChip label={`${interactions.high} high`} color="#f97316" />
+                        <LevelChip label={`${ix.high} high`} color="#f97316" />
                       </>
                     )}
                   </span>
+                ) : ix ? (
+                  "returned interaction analysis result"
                 ) : (
-                  "returned interactions"
+                  "No interaction data returned."
                 )}
               </div>
             </>

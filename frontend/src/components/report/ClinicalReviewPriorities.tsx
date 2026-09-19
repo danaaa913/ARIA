@@ -18,14 +18,28 @@ export interface ReviewPriorityItem {
   actionLabel: string;
   evidence?: string;
   timeline?: string;
+  /** Drug pair (interaction items) or single drug (deprescribing steps)
+   *  used to focus the interaction graph when the item is selected. */
+  drugs?: string[];
 }
 
 interface ClinicalReviewPrioritiesProps {
   items: ReviewPriorityItem[];
   emptyLabel?: string;
+  /** Called with the item's drug set so the report can highlight the
+   *  corresponding interaction in the graph. */
+  onSelectInteraction?: (drugs: string[]) => void;
 }
 
-function PriorityCard({ item, index }: { item: ReviewPriorityItem; index: number }) {
+function PriorityCard({
+  item,
+  index,
+  onSelect,
+}: {
+  item: ReviewPriorityItem;
+  index: number;
+  onSelect?: () => void;
+}) {
   return (
     <div
       className="rounded-xl p-4 flex gap-3 transition-colors duration-200 hover:bg-black/20"
@@ -90,13 +104,41 @@ function PriorityCard({ item, index }: { item: ReviewPriorityItem; index: number
               {item.timeline}
             </span>
           )}
+
+          {onSelect && item.drugs && item.drugs.length > 0 && (
+            <button
+              type="button"
+              onClick={onSelect}
+              className="ml-auto text-[10px] font-mono uppercase tracking-wider px-2.5 py-1 rounded transition-all duration-200 cursor-pointer flex items-center gap-1"
+              style={{
+                color: "var(--primary, #06b6d4)",
+                background: "rgba(0, 229, 255, 0.06)",
+                border: "1px solid rgba(0, 229, 255, 0.15)",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = "rgba(0, 229, 255, 0.45)";
+                e.currentTarget.style.boxShadow =
+                  "0 0 12px rgba(0, 229, 255, 0.2)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = "rgba(0, 229, 255, 0.15)";
+                e.currentTarget.style.boxShadow = "none";
+              }}
+            >
+              View interaction ↦
+            </button>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-export function ClinicalReviewPriorities({ items, emptyLabel }: ClinicalReviewPrioritiesProps) {
+export function ClinicalReviewPriorities({
+  items,
+  emptyLabel,
+  onSelectInteraction,
+}: ClinicalReviewPrioritiesProps) {
   return (
     <section className="mb-6">
       <div className="flex items-center justify-between mb-3">
@@ -142,7 +184,16 @@ export function ClinicalReviewPriorities({ items, emptyLabel }: ClinicalReviewPr
       ) : (
         <div className="space-y-3">
           {items.map((item, i) => (
-            <PriorityCard key={item.id} item={item} index={i} />
+            <PriorityCard
+              key={item.id}
+              item={item}
+              index={i}
+              onSelect={
+                item.drugs && item.drugs.length > 0 && onSelectInteraction
+                  ? () => onSelectInteraction(item.drugs as string[])
+                  : undefined
+              }
+            />
           ))}
         </div>
       )}

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { EvidenceBadge } from "./EvidenceBadge";
+import { EvidenceSummary } from "./EvidenceSummary";
 import { SeverityMeter } from "./SeverityMeter";
 import {
   clampScore,
@@ -371,40 +372,12 @@ export function InteractionCard({
                 </DetailSection>
               )}
 
-              {/* PubMed links */}
-              {interaction.pubmed_ids.length > 0 && (
-                <DetailSection title="Evidence" accent={color}>
-                  <div className="flex flex-wrap gap-2">
-                    {interaction.pubmed_ids.map((pmid) => (
-                      <a
-                        key={pmid}
-                        href={`https://pubmed.ncbi.nlm.nih.gov/${pmid}/`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-mono text-[11px] px-2.5 py-1 rounded transition-all duration-200"
-                        style={{
-                          color: "var(--primary, #06b6d4)",
-                          background: "rgba(0, 229, 255, 0.06)",
-                          border: "1px solid rgba(0, 229, 255, 0.15)",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.borderColor =
-                            "rgba(0, 229, 255, 0.45)";
-                          e.currentTarget.style.boxShadow =
-                            "0 0 14px rgba(0, 229, 255, 0.2)";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.borderColor =
-                            "rgba(0, 229, 255, 0.15)";
-                          e.currentTarget.style.boxShadow = "none";
-                        }}
-                      >
-                        📎 PMID:{pmid}
-                      </a>
-                    ))}
-                  </div>
-                </DetailSection>
-              )}
+              {/* Evidence — grade, confidence and PubMed links from the
+                  backend, or an explicit "no structured evidence metadata"
+                  note. Never invents a grade, confidence or citation. */}
+              <DetailSection title="Evidence" accent={color}>
+                <EvidenceSummary interaction={interaction} />
+              </DetailSection>
             </motion.div>
           </motion.div>
         )}
