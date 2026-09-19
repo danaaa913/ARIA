@@ -227,7 +227,7 @@ export default function AboutPage() {
                 background: "rgba(6, 182, 212, 0.05)",
               }}
             >
-              Healthcare AI · Polypharmacy · Clinical Reasoning
+              Clinical Decision Support · Polypharmacy · Patient-Specific
             </div>
           </motion.div>
 
@@ -240,7 +240,7 @@ export default function AboutPage() {
               filter: "drop-shadow(0 4px 12px rgba(0, 229, 255, 0.4)) drop-shadow(0 0 40px rgba(0, 229, 255, 0.2))",
             }}
           >
-            <span className="text-gradient">ARIA</span>
+            <span className="text-gradient">RxNexus</span>
           </motion.h1>
 
           <motion.p
@@ -249,12 +249,9 @@ export default function AboutPage() {
             transition={{ duration: 0.7, delay: 0.3 }}
             className="text-lg sm:text-xl max-w-2xl mx-auto leading-relaxed mb-4"
           >
-            <span className="font-bold text-gradient-health">Adaptive</span>{" "}
-            <span className="font-bold text-gradient-health">Risk</span>{" "}
-            <span className="font-bold text-gradient-health">Intelligence</span>{" "}
-            <span className="text-text-secondary font-light">for</span>{" "}
-            <span className="text-text-secondary font-light">Polypharmacy</span>{" "}
-            <span className="font-bold text-gradient-health">Assessment</span>
+            <span className="text-text-secondary font-light">Patient-Specific</span>{" "}
+            <span className="font-bold text-gradient-health">Polypharmacy</span>{" "}
+            <span className="font-bold text-gradient-health">Intelligence</span>
           </motion.p>
 
           <motion.p
@@ -274,7 +271,7 @@ export default function AboutPage() {
             className="flex gap-4 justify-center"
           >
             <Link href="/analyze" className="btn-primary text-sm px-8 py-3">
-              Try ARIA Now
+              Try RxNexus Now
             </Link>
             <a
               href="https://github.com/wiqilee/ARIA"
@@ -365,10 +362,10 @@ export default function AboutPage() {
         <RevealSection className="mb-24">
           <div className="text-center mb-10">
             <h2 className="font-display font-bold text-3xl text-gradient mb-3">
-              What ARIA Does Differently
+              What RxNexus Does Differently
             </h2>
             <p className="text-text-muted text-sm max-w-lg mx-auto">
-              Not a drug interaction checker. A clinical reasoning engine.
+              Not a drug interaction checker. A patient-specific clinical decision-support engine.
             </p>
           </div>
 
@@ -456,7 +453,7 @@ export default function AboutPage() {
               <StepCard
                 number={2}
                 title="AI Reasoning Pipeline"
-                description="ARIA's agent orchestrates 12 tools: RxNorm normalization, interaction detection, phenotype scoring, temporal modeling, evidence grading, renal dosing, geriatric appropriateness, and more."
+                description="RxNexus's analysis pipeline orchestrates 12 tools: RxNorm normalization, interaction detection, phenotype scoring, temporal modeling, evidence grading, renal dosing, geriatric appropriateness, and more."
                 color="#8b5cf6"
               />
             </RevealSection>
@@ -613,10 +610,34 @@ export default function AboutPage() {
           </div>
         </RevealSection>
 
-        {/* ── Project Origin ── */}
+        {/* ── Project Origin & Attribution ── */}
         <RevealSection>
           <div className="text-center max-w-xl mx-auto">
             <p className="text-text-muted text-xs leading-relaxed">
+              RxNexus is based on the open-source{" "}
+              <a
+                href="https://github.com/wiqilee/ARIA"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition-colors duration-300 hover:text-[#06b6d4]"
+                style={{ color: "#94a3b8" }}
+              >
+                ARIA project
+              </a>{" "}
+              by{" "}
+              <a
+                href="https://x.com/wiqi_lee"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="transition-colors duration-300 hover:text-[#06b6d4]"
+                style={{ color: "#94a3b8" }}
+              >
+                Wiqi Lee
+              </a>{" "}
+              and is adapted for an educational/exhibition clinical
+              decision-support prototype.
+            </p>
+            <p className="text-text-muted text-[11px] mt-2 leading-relaxed">
               ARIA was originally built for the{" "}
               <a
                 href="https://devpost.com/software/aria-adaptive-risk-intelligence-for-polypharmacy-assessment"
@@ -627,12 +648,9 @@ export default function AboutPage() {
               >
                 Agents Assemble: Healthcare AI Endgame Hackathon
               </a>{" "}
-              (sponsored by Prompt Opinion, Darena Health).
-            </p>
-            <p className="text-text-muted text-[11px] mt-2 leading-relaxed">
-              That hackathon has now concluded. ARIA is no longer in competition
-              and is maintained as an independent open source project, developed
-              and extended on a personal basis by{" "}
+              (sponsored by Prompt Opinion, Darena Health). That hackathon has
+              now concluded, and ARIA continues as an independent open-source
+              project maintained personally by{" "}
               <a
                 href="https://x.com/wiqi_lee"
                 target="_blank"

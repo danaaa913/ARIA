@@ -25,15 +25,15 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ARIA — Adaptive Risk Intelligence for Polypharmacy Assessment",
+  title: "RxNexus — Patient-Specific Polypharmacy Intelligence",
   description:
-    "An AI agent system that reasons about drug interactions through temporal cascade modeling, pharmacokinetic reasoning, patient phenotype risk scoring, and deprescribing optimization.",
+    "A clinical decision-support platform for patient-specific polypharmacy analysis — drug interactions, cumulative burden, and patient context in one integrated report.",
   keywords: [
     "polypharmacy",
     "drug interactions",
-    "clinical AI",
+    "clinical decision support",
     "pharmacovigilance",
-    "deprescribing",
+    "patient-specific risk",
   ],
 };
 

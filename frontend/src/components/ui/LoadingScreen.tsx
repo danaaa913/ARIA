@@ -77,7 +77,7 @@ export function LoadingScreen({ message }: LoadingScreenProps) {
             color: "var(--primary)",
           }}
         >
-          {message || "ARIA Analysis Pipeline"}
+          {message || "RxNexus Analysis Pipeline"}
         </p>
 
         {/* Current step display */}

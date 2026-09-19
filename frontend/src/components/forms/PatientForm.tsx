@@ -9,6 +9,7 @@ import type { PatientContext, AnalyzeRequest } from "@/lib/types";
 interface PatientFormProps {
   onSubmit: (request: AnalyzeRequest) => void;
   isLoading?: boolean;
+  initialValue?: AnalyzeRequest;
 }
 
 const DEFAULT_PATIENT: PatientContext = {
@@ -24,9 +25,13 @@ const DEFAULT_PATIENT: PatientContext = {
   allergies: [],
 };
 
-export function PatientForm({ onSubmit, isLoading = false }: PatientFormProps) {
-  const [drugs, setDrugs] = useState<string[]>(["", ""]);
-  const [patient, setPatient] = useState<PatientContext>(DEFAULT_PATIENT);
+export function PatientForm({ onSubmit, isLoading = false, initialValue }: PatientFormProps) {
+  const [drugs, setDrugs] = useState<string[]>(
+    (initialValue?.medications ?? ["", ""]).map((m) =>
+      typeof m === "string" ? m : m.name,
+    ),
+  );
+  const [patient, setPatient] = useState<PatientContext>(initialValue?.patient ?? DEFAULT_PATIENT);
 
   const addDrug = () => setDrugs([...drugs, ""]);
 

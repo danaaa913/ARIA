@@ -18,6 +18,7 @@ import type {
   InterventionWindow,
   Severity,
 } from "@/lib/types";
+import { getActionLabel } from "@/lib/severity";
 
 const Scene = dynamic(
   () => import("@/components/3d/Scene").then((m) => ({ default: m.Scene })),
@@ -93,14 +94,14 @@ function getRiskLevelFromScore(score: number): {
     level: "critical",
     color: "#ff0040",
     bgColor: "rgba(255,0,64,0.08)",
-    description: "Immediate intervention required. High probability of severe adverse drug events without prompt action.",
+    description: "Urgent clinical review recommended. High probability of severe adverse drug events without prompt action.",
   };
   if (s >= 5.0) return {
     label: "HIGH RISK",
     level: "high",
     color: "#f97316",
     bgColor: "rgba(249,115,22,0.08)",
-    description: "Significant clinical concern. Active intervention, deprescribing, or substitution strongly advised.",
+    description: "Significant clinical concern. Clinical review of therapy, including potential deprescribing or substitution, is recommended.",
   };
   if (s >= 2.0) return {
     label: "MODERATE RISK",
@@ -522,7 +523,7 @@ function getDemoDeprescribingPlan(request: AnalyzeRequest | null, graph?: Intera
         monitoring = ["Monitor for rebound symptoms", "Re-check labs at day 7"];
       } else {
         action = "discontinue";
-        timeline = "Stop immediately; evaluate alternative at follow-up";
+        timeline = "Prompt clinical review recommended; evaluate whether an alternative is appropriate";
         monitoring = ["Monitor for withdrawal", "Clinical review at 48 hours"];
       }
     } else if (sev === "high") {
@@ -708,7 +709,7 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
     <tr>
       <td>#${s.priority}</td>
       <td><strong>${esc(s.drug)}</strong></td>
-      <td><span class="act act-${s.action}">${esc((s.action ?? "").toUpperCase())}</span></td>
+      <td><span class="act act-${s.action}">${esc(getActionLabel(s.action))}</span></td>
       <td>${esc(s.substitute ?? "—")}</td>
       <td class="reduction">-${s.expected_risk_reduction}%</td>
       <td>${esc(s.timeline ?? "—")}</td>
@@ -746,7 +747,7 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>ARIA Clinical Report — ${now}</title>
+<title>RxNexus Clinical Report — ${now}</title>
 <style>
   /* Proper PDF page margins — @page controls the actual paper margins
      when the browser renders to PDF. Padding on body is for on-screen
@@ -925,8 +926,8 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
 
   <div class="hdr">
     <div class="meta">
-      <h1 class="title">ARIA Clinical Report</h1>
-      <p class="sub">Adaptive Risk Intelligence for Polypharmacy Assessment</p>
+      <h1 class="title">RxNexus Clinical Report</h1>
+      <p class="sub">Patient-Specific Polypharmacy Intelligence</p>
       <p class="sub">${report?.medication_count ?? 0} medications · ${now}</p>
     </div>
     <div class="rb">
@@ -1017,8 +1018,9 @@ function generateReportHTML(data: AnalyzeResponse, request: AnalyzeRequest | nul
        developers and auditors who need to inspect it. */ ""}
 
   <div class="ft">
-    <p><strong>ARIA</strong> — Adaptive Risk Intelligence for Polypharmacy Assessment</p>
-    <p style="max-width:640px;margin:8px auto">AI-generated for informational purposes only. Review by qualified healthcare professional required.</p>
+    <p><strong>RxNexus</strong> — Patient-Specific Polypharmacy Intelligence</p>
+    <p style="max-width:640px;margin:8px auto">Decision-support only. AI-generated for informational purposes; review by a qualified healthcare professional is required.</p>
+    <p style="max-width:640px;margin:4px auto">RxNexus is based on the open-source ARIA project by Wiqi Lee (MIT license) and is adapted for an educational/exhibition clinical decision-support prototype.</p>
     <p style="margin-top:8px">${now}</p>
   </div>
 
@@ -1678,17 +1680,17 @@ function DeprescribingInterpretation({ plan }: { plan: DeprescribingPlan | null 
           were getting lost in low-contrast gray. */}
       <div className="grid grid-cols-3 gap-1.5">
         <StatBox
-          label="Discontinue"
+          label={getActionLabel("discontinue")}
           value={countBy("discontinue")}
           accent={countBy("discontinue") > 0 ? "#ef4444" : undefined}
         />
         <StatBox
-          label="Substitute"
+          label={getActionLabel("substitute")}
           value={countBy("substitute")}
           accent={countBy("substitute") > 0 ? "#06b6d4" : undefined}
         />
         <StatBox
-          label="Reduce"
+          label={getActionLabel("reduce")}
           value={countBy("reduce")}
           accent={countBy("reduce") > 0 ? "#f59e0b" : undefined}
         />
@@ -1731,7 +1733,7 @@ function DeprescribingInterpretation({ plan }: { plan: DeprescribingPlan | null 
                         border: `1px solid ${ac}55`,
                       }}
                     >
-                      {s.action}
+                      {getActionLabel(s.action)}
                     </span>
                     <span className="font-mono font-bold text-xs" style={{ color: "#10b981" }}>
                       −{s.expected_risk_reduction}%
@@ -1842,8 +1844,8 @@ export default function ReportPage() {
 
   useEffect(() => {
     try {
-      const stored = sessionStorage.getItem("aria-result");
-      const storedReq = sessionStorage.getItem("aria-request");
+      const stored = sessionStorage.getItem("rxnexus-result");
+      const storedReq = sessionStorage.getItem("rxnexus-request");
       if (stored) setData(JSON.parse(stored));
       if (storedReq) setRequest(JSON.parse(storedReq));
     } catch { /* ignore */ }
@@ -1911,7 +1913,7 @@ export default function ReportPage() {
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
-    a.download = `ARIA-Report-${new Date().toISOString().slice(0, 10)}.html`;
+    a.download = `RxNexus-Report-${new Date().toISOString().slice(0, 10)}.html`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, [data, request]);
@@ -2038,6 +2040,23 @@ export default function ReportPage() {
             ))}
           </div>
         </motion.div>
+
+        {/* Decision-support notice */}
+        <div
+          className="rounded-lg px-4 py-3 mb-6 text-xs leading-relaxed"
+          style={{
+            background: "rgba(6, 182, 212, 0.05)",
+            border: "1px solid rgba(6, 182, 212, 0.15)",
+            color: "#a3b8d0",
+          }}
+        >
+          <span className="font-semibold" style={{ color: "#00e5ff" }}>
+            Decision support only.
+          </span>{" "}
+          RxNexus provides clinical decision support only. Recommendations
+          require review by a qualified healthcare professional and should
+          not be used as autonomous prescribing instructions.
+        </div>
 
         {/* ── Main grid: stack on mobile, side-by-side on desktop ──
             On desktop the left column (3D viz + interpretation panel) is
@@ -2234,7 +2253,7 @@ export default function ReportPage() {
                         border: `1px solid ${deprescribingClick.color}55`,
                       }}
                     >
-                      {deprescribingClick.step.action}
+                      {getActionLabel(deprescribingClick.step.action)}
                     </span>
                     <span className="font-mono font-bold text-base" style={{ color: "#10b981" }}>
                       -{deprescribingClick.step.expected_risk_reduction}%
@@ -2311,10 +2330,10 @@ export default function ReportPage() {
               <div className="rounded-lg p-3 text-[11px] leading-relaxed space-y-1" style={{ background: "rgba(8,20,37,0.5)", border: "1px solid rgba(0,229,255,0.07)" }}>
                 <p style={{ color: "#7a8ba8" }} className="font-semibold mb-1.5">Score Scale Reference:</p>
                 {[
-                  { range: "0.0–2.0", min: 0.0, max: 2.0, label: "Low",      color: "#10b981", desc: "Minimal risk. Routine monitoring sufficient. No immediate intervention needed." },
+                  { range: "0.0–2.0", min: 0.0, max: 2.0, label: "Low",      color: "#10b981", desc: "Minimal risk. Routine monitoring sufficient. No immediate high-priority review identified." },
                   { range: "2.0–5.0", min: 2.0, max: 5.0, label: "Moderate", color: "#f59e0b", desc: "Enhanced monitoring recommended. Consider dose adjustments or alternative therapies if risk factors change." },
-                  { range: "5.0–8.5", min: 5.0, max: 8.5, label: "High",     color: "#f97316", desc: "Significant danger. Active intervention, deprescribing, or substitution strongly advised." },
-                  { range: "8.5–10",  min: 8.5, max: 10.0, label: "Critical", color: "#ff0040", desc: "Immediate action required. High probability of severe adverse events without prompt change." },
+                  { range: "5.0–8.5", min: 5.0, max: 8.5, label: "High",     color: "#f97316", desc: "Significant clinical concern. Clinical review of therapy, including potential deprescribing or substitution, is recommended." },
+                  { range: "8.5–10",  min: 8.5, max: 10.0, label: "Critical", color: "#ff0040", desc: "Urgent clinical review recommended. High probability of severe adverse events without prompt change." },
                 ].map((s, i) => {
                   // Band containment: `[min, max)` for the lower three,
                   // `[8.5, 10]` for the top band. Matches `severity.ts`.

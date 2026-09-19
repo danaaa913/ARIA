@@ -68,9 +68,9 @@ export function getSeverityBgColor(score: number): string {
 export function getSeverityInterpretation(score: number): string {
   switch (getSeverityLabel(score)) {
     case "CRITICAL":
-      return "Immediate intervention required. High probability of severe adverse drug events without prompt action.";
+      return "Urgent clinical review recommended. High probability of severe adverse drug events without prompt action.";
     case "HIGH":
-      return "Significant clinical concern. Active intervention, deprescribing, or substitution strongly advised.";
+      return "Significant clinical concern. Clinical review of therapy, including potential deprescribing or substitution, is recommended.";
     case "MODERATE":
       return "Enhanced monitoring recommended. Consider dose adjustments or alternative therapies if risk factors change.";
     case "LOW":
@@ -97,7 +97,7 @@ export const SCORE_SCALE_REFERENCE: ReadonlyArray<{
     max: 2.0,
     label: "LOW",
     color: "#10b981",
-    desc: "Minimal risk. Routine monitoring sufficient. No immediate intervention needed.",
+    desc: "Minimal risk. Routine monitoring sufficient. No immediate high-priority review identified.",
   },
   {
     range: "2.0 – 5.0",
@@ -113,7 +113,7 @@ export const SCORE_SCALE_REFERENCE: ReadonlyArray<{
     max: 8.5,
     label: "HIGH",
     color: "#f97316",
-    desc: "Significant danger. Active intervention, deprescribing, or substitution strongly advised.",
+    desc: "Significant clinical concern. Clinical review of therapy, including potential deprescribing or substitution, is recommended.",
   },
   {
     range: "8.5 – 10.0",
@@ -121,7 +121,7 @@ export const SCORE_SCALE_REFERENCE: ReadonlyArray<{
     max: 10.0,
     label: "CRITICAL",
     color: "#ff0040",
-    desc: "Immediate action required. High probability of severe adverse events without prompt change.",
+    desc: "Urgent clinical review recommended. High probability of severe adverse events without prompt change.",
   },
 ];
 
@@ -141,5 +141,25 @@ export function scoreFromLabel(label: string | undefined | null): number {
       return 1.0; // midpoint of 0–2
     default:
       return 3.5;
+  }
+}
+
+/** Display-only wording for a structured deprescribing action. The raw
+ *  `action` enum value (discontinue / substitute / reduce / monitor) is
+ *  preserved in the data model for styling, export CSS classes, and the
+ *  Rust/Python agents — this function maps it to review-oriented copy for
+ *  every user-facing surface. */
+export function getActionLabel(action: string | undefined | null): string {
+  switch ((action ?? "").trim().toLowerCase()) {
+    case "discontinue":
+      return "Review for discontinuation";
+    case "substitute":
+      return "Review alternative therapy";
+    case "reduce":
+      return "Review dose reduction";
+    case "monitor":
+      return "Monitoring priority";
+    default:
+      return action && action.trim().length > 0 ? action : "Review required";
   }
 }

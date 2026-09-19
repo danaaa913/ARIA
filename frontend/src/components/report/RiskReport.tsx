@@ -21,7 +21,7 @@ const BURDEN_EXPLANATIONS: Record<string, Record<string, string>> = {
   anticholinergic: {
     low: "Minimal anticholinergic effects expected.",
     moderate: "May cause dry mouth, constipation, or mild confusion. Monitor cognitive function.",
-    high: "Significant anticholinergic load. Risk of delirium, falls, and cognitive decline. Deprescribing review strongly recommended.",
+    high: "Significant anticholinergic load. Risk of delirium, falls, and cognitive decline. Deprescribing review may be appropriate.",
   },
   sedation: {
     low: "Low sedation risk with current regimen.",
@@ -31,7 +31,7 @@ const BURDEN_EXPLANATIONS: Record<string, Record<string, string>> = {
   qt: {
     low: "Low QT prolongation risk.",
     moderate: "Moderate QT risk. Consider baseline ECG and electrolyte monitoring.",
-    high: "Significant QT prolongation risk. ECG monitoring required. Avoid additional QT-prolonging agents.",
+    high: "Significant QT prolongation risk. Consider ECG monitoring based on clinical context. Review other QT-prolonging agents with the prescriber.",
   },
 };
 

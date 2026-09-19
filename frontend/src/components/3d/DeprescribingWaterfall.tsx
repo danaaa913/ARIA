@@ -5,6 +5,7 @@ import { useFrame } from "@react-three/fiber";
 import { Text, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import type { DeprescribingPlan, DeprescribingStep } from "@/lib/types";
+import { getActionLabel } from "@/lib/severity";
 
 const ACTION_COLORS: Record<string, string> = {
   discontinue: "#ef4444",
@@ -101,6 +102,13 @@ export function DeprescribingWaterfall({
         const stepProgress = Math.max(0, Math.min((animProgress - i * 0.1) / 0.3, 1));
         const animatedWidth = width * stepProgress;
         const isHovered = hoveredStep === i;
+        const actionLabel = getActionLabel(step.action);
+        // Review-oriented labels are longer than the raw enum ("Review for
+        // discontinuation" vs "discontinue"). Show the full mapped label only
+        // when it fits inside the animated bar (approx 0.09 units per char
+        // at fontSize 0.16); narrow bars fall back to the short enum so the
+        // 3D text never spills past the bar into the neighbouring visuals.
+        const labelFits = actionLabel.length * 0.09 <= animatedWidth - 0.25;
 
         cumulativeReduction += reduction;
 
@@ -159,7 +167,7 @@ export function DeprescribingWaterfall({
             {/* Action label inside bar */}
             {stepProgress > 0.5 && animatedWidth > 0.8 && (
               <Text position={[-maxWidth / 2 + animatedWidth / 2, y, 0.2]} fontSize={0.16} color="#020817" anchorX="center" anchorY="middle" fontWeight="bold">
-                {(step.action ?? "").toUpperCase()}
+                {(labelFits ? actionLabel : step.action ?? "").toUpperCase()}
               </Text>
             )}
 

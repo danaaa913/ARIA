@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import type { DeprescribingStep as DeprescribingStepType } from "@/lib/types";
+import { getActionLabel } from "@/lib/severity";
 
 const ACTION_STYLES: Record<string, { color: string; bg: string; icon: string }> = {
   discontinue: { color: "#ef4444", bg: "rgba(239, 68, 68, 0.1)", icon: "⛔" },
@@ -66,7 +67,7 @@ export function DeprescribingStep({ step, index }: DeprescribingStepProps) {
             className="text-xs font-semibold uppercase px-2 py-0.5 rounded"
             style={{ color: style.color, backgroundColor: style.bg }}
           >
-            {style.icon} {step.action}
+            {style.icon} {getActionLabel(step.action)}
           </span>
         </div>
 

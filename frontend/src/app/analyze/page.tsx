@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import dynamic from "next/dynamic";
@@ -26,6 +26,21 @@ export default function AnalyzePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // `?demo=1` (the "Load Demo Case" CTA on the landing page) PREFILLS the
+  // first synthetic profile into the form. It does NOT auto-submit — the
+  // user reviews the medications and patient context, then clicks
+  // "Analyze" themselves. Visiting /analyze never triggers a surprise
+  // Gemini call; running the analysis stays an explicit action.
+  const [prefill, setPrefill] = useState<AnalyzeRequest | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("demo") === "1" && SAMPLE_PROFILES.length > 0) {
+      setPrefill(SAMPLE_PROFILES[0].request);
+      window.history.replaceState({}, "", "/analyze");
+    }
+  }, []);
+
   const handleSubmit = async (request: AnalyzeRequest) => {
     setIsLoading(true);
     setError(null);
@@ -43,8 +58,8 @@ export default function AnalyzePage() {
       }
 
       const data: AnalyzeResponse = await resp.json();
-      sessionStorage.setItem("aria-result", JSON.stringify(data));
-      sessionStorage.setItem("aria-request", JSON.stringify(request));
+      sessionStorage.setItem("rxnexus-result", JSON.stringify(data));
+      sessionStorage.setItem("rxnexus-request", JSON.stringify(request));
       router.push("/report");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -65,7 +80,7 @@ export default function AnalyzePage() {
       </div>
 
       <AnimatePresence>
-        {isLoading && <LoadingScreen message="Running ARIA pipeline..." />}
+        {isLoading && <LoadingScreen message="Running RxNexus analysis..." />}
       </AnimatePresence>
 
       <div className="relative z-10 min-h-screen pt-24 pb-16 px-4 sm:px-6 lg:px-8">
@@ -121,7 +136,7 @@ export default function AnalyzePage() {
               Polypharmacy Analysis
             </motion.h1>
             <p className="text-text-secondary text-sm max-w-md mx-auto leading-relaxed">
-              Enter medications and clinical context. ARIA will build an
+              Enter medications and clinical context. RxNexus will build an
               interaction graph, compute personalized risk, model temporal
               cascades, flag renal dose adjustments, screen for geriatric
               appropriateness, and generate a deprescribing plan.
@@ -173,7 +188,12 @@ export default function AnalyzePage() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="glass-panel p-6 sm:p-8"
           >
-            <PatientForm onSubmit={handleSubmit} isLoading={isLoading} />
+            <PatientForm
+              key={prefill ? "demo" : "blank"}
+              onSubmit={handleSubmit}
+              isLoading={isLoading}
+              initialValue={prefill ?? undefined}
+            />
           </motion.div>
 
           {/* Sample profiles */}

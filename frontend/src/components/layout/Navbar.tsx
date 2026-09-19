@@ -103,7 +103,7 @@ export function Navbar() {
                 e.currentTarget.style.filter = "drop-shadow(0 2px 6px rgba(0, 229, 255, 0.35))";
               }}
             >
-              ARIA
+              RxNexus
             </span>
           </Link>
 
