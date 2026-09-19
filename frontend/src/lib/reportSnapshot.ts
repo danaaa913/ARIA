@@ -27,7 +27,7 @@ import type {
 } from "./types";
 
 export const RX_SNAPSHOT_KEY = "rxnexus-snapshot";
-export const RX_SNAPSHOT_SCHEMA_VERSION = 1;
+export const RX_SNAPSHOT_SCHEMA_VERSION = 2;
 export const LEGACY_REPORT_KEYS = ["rxnexus-result", "rxnexus-request"] as const;
 
 export interface ReportSnapshot {
@@ -35,7 +35,10 @@ export interface ReportSnapshot {
   result: AnalyzeResponse | null;
   createdAt: string | null;
   schemaVersion: number;
+  source: ReportSnapshotSource;
 }
+
+export type ReportSnapshotSource = "live" | "pre_generated_synthetic";
 
 type SnapshotStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -150,12 +153,14 @@ export function writeSnapshot(
   storage: SnapshotStorage,
   request: AnalyzeRequest,
   result: AnalyzeResponse,
+  source: ReportSnapshotSource = "live",
 ): void {
   const snapshot: ReportSnapshot = {
     request,
     result,
     createdAt: new Date().toISOString(),
     schemaVersion: RX_SNAPSHOT_SCHEMA_VERSION,
+    source,
   };
   storage.setItem(RX_SNAPSHOT_KEY, JSON.stringify(snapshot));
   removeLegacyKeys(storage);
@@ -195,7 +200,8 @@ export function readSnapshot(storage: SnapshotStorage): ReportSnapshot | null {
       parsed.result &&
       typeof parsed.result === "object" &&
       parsed.request &&
-      typeof parsed.request === "object"
+      typeof parsed.request === "object" &&
+      (parsed.source === "live" || parsed.source === "pre_generated_synthetic")
     ) {
       return {
         request: parsed.request as AnalyzeRequest,
@@ -203,6 +209,7 @@ export function readSnapshot(storage: SnapshotStorage): ReportSnapshot | null {
         createdAt:
           typeof parsed.createdAt === "string" ? parsed.createdAt : null,
         schemaVersion: RX_SNAPSHOT_SCHEMA_VERSION,
+        source: parsed.source,
       };
     }
   } catch {

@@ -9,6 +9,7 @@ import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import { GridBackground } from "@/components/effects/GridBackground";
 import type { AnalyzeRequest, AnalyzeResponse } from "@/lib/types";
 import { clearSnapshot, writeSnapshot } from "@/lib/reportSnapshot";
+import { PRE_GENERATED_DEMO_REQUEST, PRE_GENERATED_DEMO_RESULT } from "@/lib/preGeneratedDemo";
 
 const Scene = dynamic(
   () => import("@/components/3d/Scene").then((m) => ({ default: m.Scene })),
@@ -36,11 +37,20 @@ export default function AnalyzePage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
-    if (params.get("demo") === "1" && SAMPLE_PROFILES.length > 0) {
+    if (params.get("demoReport") === "1") {
+      writeSnapshot(sessionStorage, PRE_GENERATED_DEMO_REQUEST, PRE_GENERATED_DEMO_RESULT, "pre_generated_synthetic");
+      router.replace("/report");
+    } else if (params.get("demo") === "1" && SAMPLE_PROFILES.length > 0) {
       setPrefill(SAMPLE_PROFILES[0].request);
       window.history.replaceState({}, "", "/analyze");
     }
-  }, []);
+  }, [router]);
+
+  const openPreGeneratedDemo = () => {
+    clearSnapshot(sessionStorage);
+    writeSnapshot(sessionStorage, PRE_GENERATED_DEMO_REQUEST, PRE_GENERATED_DEMO_RESULT, "pre_generated_synthetic");
+    router.push("/report");
+  };
 
   const handleSubmit = async (request: AnalyzeRequest) => {
     setIsLoading(true);
@@ -63,8 +73,10 @@ export default function AnalyzePage() {
       });
 
       if (!resp.ok) {
-        const body = await resp.text();
-        throw new Error(`Analysis failed (${resp.status}): ${body}`);
+        if (resp.status === 504 || resp.status === 408) {
+          throw new Error("The free-provider analysis is taking too long. No report was saved. Retry, reduce the medication list, or open the clearly labeled pre-generated synthetic demo report below.");
+        }
+        throw new Error("The live analysis could not be completed. No report was saved; please retry shortly.");
       }
 
       const data: AnalyzeResponse = await resp.json();
@@ -128,7 +140,6 @@ export default function AnalyzePage() {
                 Clinical Analysis
               </span>
             </div>
-
             <motion.h1
               className="font-display font-bold text-3xl sm:text-4xl mb-3"
               style={{
@@ -239,6 +250,12 @@ export default function AnalyzePage() {
                 </button>
               ))}
             </div>
+            <button onClick={openPreGeneratedDemo} disabled={isLoading} className="btn-secondary mt-4 disabled:opacity-50">
+              Open Pre-generated Synthetic Demo Report
+            </button>
+            <p className="text-[11px] text-text-muted mt-2">
+              Instant checked-in fixture; clearly separated from live OpenRouter analysis.
+            </p>
           </motion.div>
         </div>
       </div>

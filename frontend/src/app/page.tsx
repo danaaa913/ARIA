@@ -199,6 +199,9 @@ export default function HomePage() {
             <Link href="/analyze?demo=1">
               <button className="btn-secondary">Load Demo Case</button>
             </Link>
+            <Link href="/analyze?demoReport=1">
+              <button className="btn-secondary">Open Pre-generated Demo Report</button>
+            </Link>
           </motion.div>
         </div>
 
@@ -429,6 +432,9 @@ export default function HomePage() {
               </Link>
               <Link href="/analyze?demo=1">
                 <button className="btn-secondary">Load Demo Case</button>
+              </Link>
+              <Link href="/analyze?demoReport=1">
+                <button className="btn-secondary">Open Pre-generated Demo Report</button>
               </Link>
             </div>
           </motion.div>

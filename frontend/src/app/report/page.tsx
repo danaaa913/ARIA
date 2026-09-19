@@ -29,7 +29,9 @@ import {
   resolveInteractionTotals,
   rawInteractionList as snapshotInteractions,
   readSnapshot,
+  type ReportSnapshotSource,
 } from "@/lib/reportSnapshot";
+import { PreGeneratedDemoReport } from "@/components/report/PreGeneratedDemoReport";
 
 const Scene = dynamic(
   () => import("@/components/3d/Scene").then((m) => ({ default: m.Scene })),
@@ -1573,6 +1575,7 @@ export default function ReportPage() {
   const router = useRouter();
   const [data, setData] = useState<AnalyzeResponse | null>(null);
   const [request, setRequest] = useState<AnalyzeRequest | null>(null);
+  const [snapshotSource, setSnapshotSource] = useState<ReportSnapshotSource | null>(null);
   const [activeViz, setActiveViz] = useState<"graph" | "temporal" | "radar" | "waterfall">("graph");
   // Holds the currently-hovered radar axis so we can render an HTML tooltip
   // overlay (anchored on the right of the canvas, never clipped).
@@ -1596,9 +1599,11 @@ export default function ReportPage() {
     if (snap) {
       setData(snap.result);
       setRequest(snap.request);
+      setSnapshotSource(snap.source);
     } else {
       setData(null);
       setRequest(null);
+      setSnapshotSource(null);
     }
   }, []);
 
@@ -1708,6 +1713,10 @@ export default function ReportPage() {
         </div>
       </div></>
     );
+  }
+
+  if (snapshotSource === "pre_generated_synthetic" && request) {
+    return <><GridBackground /><PreGeneratedDemoReport request={request} result={data} /></>;
   }
 
   const errors = data.errors ?? [];
