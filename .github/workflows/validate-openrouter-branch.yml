@@ -43,6 +43,11 @@ jobs:
       - name: Test OpenRouter privacy behavior
         run: cargo test --locked llm::client::tests
 
+      - name: Test structured interaction handling
+        run: |
+          cargo test --locked api::rxnorm::tests
+          cargo test --locked tools::interaction_graph::tests
+
   frontend:
     name: Build frontend
     runs-on: ubuntu-latest
